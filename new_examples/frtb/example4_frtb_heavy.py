@@ -1544,17 +1544,18 @@ if __name__ == "__main__":
             (report,) = engine.get(dict_graph, ["total"])
 
         elif mode == "both":
-            # Phase 1 (parfun): all trades in one flat batch — workers compute
-            #   sensitivities.  Maximum parallelism, zero idle workers.
-            # Phase 2 (pargraph): DAG for bucketing/scenarios/aggregation —
-            #   workers handle scenario fan-out.  Showcases both libraries.
+            # Same per-trade DAG as pargraph-only.  Parfun and pargraph are
+            # *alternative* strategies for the same bottleneck (distributing
+            # trade computations across workers) — they cannot stack because
+            # there is only one level of parallelism to exploit.
+            #
+            # With larger inputs where bucket-level Cholesky becomes heavy
+            # (100+ sensitivities per bucket), parfun could additionally
+            # parallelise inside scenario nodes.  With typical trade counts
+            # the scenario nodes are sub-millisecond, so nested parfun is
+            # pure overhead.
             trades = load_and_enrich_trades(n_trades=N_TRADES, seed=42)
-            with _parfun_backend_context(args.scheduler):
-                all_results = _compute_all_sensitivities_parallel(
-                    trades, n_mc_paths=EQ_MC_PATHS, bootstrap_iters=BOOTSTRAP_ITERS
-                )
-            grouped = _group_sensitivities(all_results)
-            dict_graph = _build_post_sensitivity_graph(grouped, trades)
+            dict_graph = _build_per_trade_graph(trades, BOOTSTRAP_ITERS)
             engine = GraphEngine(backend=client)
             (report,) = engine.get(dict_graph, ["total"])
 
