@@ -1544,20 +1544,25 @@ if __name__ == "__main__":
             (report,) = engine.get(dict_graph, ["total"])
 
         elif mode == "both":
-            # Same per-trade DAG as pargraph-only.  Parfun and pargraph are
-            # *alternative* strategies for the same bottleneck (distributing
-            # trade computations across workers) — they cannot stack because
-            # there is only one level of parallelism to exploit.
+            # Pargraph for DAG structure + parfun for data parallelism inside nodes.
             #
-            # With larger inputs where bucket-level Cholesky becomes heavy
-            # (100+ sensitivities per bucket), parfun could additionally
-            # parallelise inside scenario nodes.  With typical trade counts
-            # the scenario nodes are sub-millisecond, so nested parfun is
-            # pure overhead.
-            trades = load_and_enrich_trades(n_trades=N_TRADES, seed=42)
-            dict_graph = _build_per_trade_graph(trades, BOOTSTRAP_ITERS)
+            # GraphEngine dispatches the @graph DAG to Scaler workers:
+            #   - 5 sensitivity nodes run in parallel (one per risk class)
+            #   - Each sensitivity node internally uses parfun with scaler_remote
+            #     to fan out its trades as nested tasks back to the cluster
+            #   - 15 scenario nodes, 5 worst-case nodes, 1 aggregation node follow
+            #
+            # This is slightly slower than the flat modes because the 5 sensitivity
+            # nodes each submit their own parfun batch, competing for workers.
+            # But it demonstrates the two libraries at different levels:
+            #   pargraph → DAG-level scheduling (node dependencies)
+            #   parfun   → data-level scheduling (per-trade fan-out within nodes)
             engine = GraphEngine(backend=client)
-            (report,) = engine.get(dict_graph, ["total"])
+            graph_obj = frtb_sbm_capital.to_graph()
+            dict_graph, keys = graph_obj.to_dict(
+                n_trades=N_TRADES, bootstrap_iters=BOOTSTRAP_ITERS, scheduler_address=args.scheduler
+            )
+            (report,) = engine.get(dict_graph, keys)
 
         elapsed = time.perf_counter() - t0
 
