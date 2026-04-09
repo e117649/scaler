@@ -72,9 +72,9 @@ from pargraph import graph, delayed
 
 
 # adjustments ------------------
-N_TRADES = 2
-EQ_MC_PATHS = 500
-BOOTSTRAP_ITERS = 5  # inner loop iterations for _bootstrap_yield_curve (production: 5000)
+N_TRADES = 20
+EQ_MC_PATHS = 100
+BOOTSTRAP_ITERS = 200  # inner loop iterations for _bootstrap_yield_curve (production: 5000)
 # ------------------------------
 
 # When set to a tcp:// address, @delayed nodes use scaler_remote for nested @pf.parallel work.
@@ -414,7 +414,9 @@ def _compute_girr_sensitivities_for_trade(
     return (trade.bucket, trade_sens_list)
 
 
-@pf.parallel(split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat)
+@pf.parallel(
+    split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat, fixed_partition_size=1
+)
 def _compute_girr_sensitivities_parallel(
     class_trades: List[Trade],
     base_rate: float,
@@ -534,7 +536,9 @@ def _compute_eq_sensitivities_for_trade(
     return (trade.bucket, trade_sens)
 
 
-@pf.parallel(split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat)
+@pf.parallel(
+    split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat, fixed_partition_size=1
+)
 def _compute_eq_sensitivities_parallel(
     class_trades: List[Trade],
     base_rate: float,
@@ -646,7 +650,9 @@ def _compute_csr_sensitivities_for_trade(
     return (trade.bucket, trade_sens_list)
 
 
-@pf.parallel(split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat)
+@pf.parallel(
+    split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat, fixed_partition_size=1
+)
 def _compute_csr_sensitivities_parallel(
     class_trades: List[Trade],
     base_rate: float,
@@ -745,7 +751,9 @@ def _compute_fx_sensitivities_for_trade(
     return (trade.bucket, trade_sens_list)
 
 
-@pf.parallel(split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat)
+@pf.parallel(
+    split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat, fixed_partition_size=1
+)
 def _compute_fx_sensitivities_parallel(
     class_trades: List[Trade],
     base_rate: float,
@@ -842,7 +850,9 @@ def _compute_cmdty_sensitivities_for_trade(
     return (trade.bucket, trade_sens_list)
 
 
-@pf.parallel(split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat)
+@pf.parallel(
+    split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat, fixed_partition_size=1
+)
 def _compute_cmdty_sensitivities_parallel(
     class_trades: List[Trade],
     base_rate: float,
@@ -891,6 +901,120 @@ def compute_cmdty_sensitivities(
     return BucketedSensitivities(risk_class="CMDTY", by_bucket=sensitivities, n_trades=len(class_trades))
 
 
+# ─── Unified per-trade dispatch (flat parallelism) ──────────────────────────
+
+
+def _compute_sensitivities_for_trade(
+    trade: Trade,
+    base_rate: float = 0.04,
+    bump_size_ir: float = 0.0001,
+    bump_size_eq: float = 0.01,
+    bump_size_vol: float = 0.01,
+    bump_size_cs: float = 0.0001,
+    n_mc_paths: int = 100,
+    n_historical_scenarios: int = 250,
+    bootstrap_iters: int = 5,
+) -> Tuple[str, int, List[Sensitivity]]:
+    """
+    Unified per-trade sensitivity dispatcher.
+
+    Routes to the appropriate risk-class function based on trade.asset_class.
+    Returns (risk_class, bucket_id, sensitivities).
+
+    Used by the flat parfun path (all trades in one batch) and by the per-trade
+    pargraph dict-graph (one DAG node per trade).
+    """
+    ac = trade.asset_class
+    if ac == "GIRR":
+        bid, sens = _compute_girr_sensitivities_for_trade(
+            trade, base_rate, bump_size_ir, n_historical_scenarios, bootstrap_iters
+        )
+    elif ac == "EQ":
+        bid, sens = _compute_eq_sensitivities_for_trade(
+            trade, base_rate, bump_size_eq, bump_size_vol, n_mc_paths, n_historical_scenarios
+        )
+    elif ac == "CSR":
+        bid, sens = _compute_csr_sensitivities_for_trade(
+            trade, base_rate, bump_size_cs, n_historical_scenarios, bootstrap_iters
+        )
+    elif ac == "FX":
+        bid, sens = _compute_fx_sensitivities_for_trade(
+            trade, base_rate, bump_size_eq, n_historical_scenarios, bootstrap_iters
+        )
+    elif ac == "CMDTY":
+        bid, sens = _compute_cmdty_sensitivities_for_trade(
+            trade, base_rate, bump_size_eq, n_historical_scenarios, bootstrap_iters
+        )
+    else:
+        raise ValueError(f"Unknown asset class: {ac}")
+    return (ac, bid, sens)
+
+
+@pf.parallel(
+    split=pf.per_argument(all_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat, fixed_partition_size=1
+)
+def _compute_all_sensitivities_parallel(
+    all_trades: List[Trade],
+    base_rate: float = 0.04,
+    bump_size_ir: float = 0.0001,
+    bump_size_eq: float = 0.01,
+    bump_size_vol: float = 0.01,
+    bump_size_cs: float = 0.0001,
+    n_mc_paths: int = 100,
+    n_historical_scenarios: int = 250,
+    bootstrap_iters: int = 5,
+) -> List[Tuple[str, int, List[Sensitivity]]]:
+    """Flat parfun wrapper: all trades in one batch, maximum worker utilisation."""
+    return [
+        _compute_sensitivities_for_trade(
+            t,
+            base_rate,
+            bump_size_ir,
+            bump_size_eq,
+            bump_size_vol,
+            bump_size_cs,
+            n_mc_paths,
+            n_historical_scenarios,
+            bootstrap_iters,
+        )
+        for t in all_trades
+    ]
+
+
+def _group_sensitivities(results: List[Tuple[str, int, List[Sensitivity]]]) -> Dict[str, BucketedSensitivities]:
+    """Group flat per-trade results into BucketedSensitivities per risk class."""
+    by_class: Dict[str, Dict[int, List[Sensitivity]]] = {}
+    trade_counts: Dict[str, int] = {}
+    for risk_class, bucket_id, sens_list in results:
+        if risk_class not in by_class:
+            by_class[risk_class] = {}
+            trade_counts[risk_class] = 0
+        trade_counts[risk_class] += 1
+        if bucket_id not in by_class[risk_class]:
+            by_class[risk_class][bucket_id] = []
+        by_class[risk_class][bucket_id].extend(sens_list)
+    result = {}
+    for rc in ["GIRR", "CSR", "EQ", "FX", "CMDTY"]:
+        if rc in by_class:
+            result[rc] = BucketedSensitivities(risk_class=rc, by_bucket=by_class[rc], n_trades=trade_counts[rc])
+        else:
+            result[rc] = BucketedSensitivities(risk_class=rc, by_bucket={}, n_trades=0)
+    return result
+
+
+def _collect_and_bucket_results(risk_class: str, *results: Tuple[str, int, List[Sensitivity]]) -> BucketedSensitivities:
+    """
+    Pargraph dict-graph node: collect per-trade sensitivity results for one risk class
+    into a BucketedSensitivities object.  Called with only the trades for this risk class.
+    """
+    sensitivities: Dict[int, List[Sensitivity]] = {}
+    for _, bucket_id, sens_list in results:
+        if bucket_id not in sensitivities:
+            sensitivities[bucket_id] = []
+        sensitivities[bucket_id].extend(sens_list)
+    return BucketedSensitivities(risk_class=risk_class, by_bucket=sensitivities, n_trades=len(results))
+
+
 def _compute_single_bucket_capital(
     bucket_id: int, sens_list: List[Sensitivity], rho_eff: float
 ) -> Tuple[int, float, float]:
@@ -936,7 +1060,9 @@ def _compute_single_bucket_capital(
     return (bucket_id, Kb, Sb)
 
 
-@pf.parallel(split=pf.per_argument(bucket_items=pf.py_list.by_chunk), combine_with=pf.py_list.concat)
+@pf.parallel(
+    split=pf.per_argument(bucket_items=pf.py_list.by_chunk), combine_with=pf.py_list.concat, fixed_partition_size=1
+)
 def _compute_bucket_capitals_parallel(
     bucket_items: List[Tuple[int, List[Sensitivity]]], rho_eff: float
 ) -> List[Tuple[int, float, float]]:
@@ -1216,9 +1342,14 @@ def frtb_sbm_capital(
 # Four execution modes to benchmark pargraph and parfun independently:
 #
 #   sequential     – no parallelism at all (single-process baseline)
-#   parfun-only    – nodes run sequentially, parfun parallelises trades via Scaler
-#   pargraph-only  – DAG nodes dispatched to Scaler, parfun disabled inside nodes
-#   both           – DAG nodes on Scaler + nested parfun on Scaler
+#   parfun-only    – ALL trades in one flat parfun batch → max worker utilisation
+#   pargraph-only  – per-trade dict-graph → pargraph distributes individual trades
+#   both           – Phase 1: flat parfun for trades. Phase 2: pargraph DAG for
+#                    bucketing/scenarios/aggregation
+#
+# Previous architecture processed 5 risk classes serially (each submitting their
+# trades separately).  The new flat approach sends ALL trades across ALL risk
+# classes in a single parallel batch, eliminating serial bottlenecks.
 #
 # Usage:
 #   # start cluster:  PYTHONPATH=. scaler cluster.toml
@@ -1258,12 +1389,122 @@ if __name__ == "__main__":
 
     modes_to_run = MODES[:-1] if args.mode == "all" else [args.mode]
 
-    def _run_mode(mode: str) -> None:
+    RISK_CLASSES = ["GIRR", "CSR", "EQ", "FX", "CMDTY"]
+
+    def _run_post_sensitivity_pipeline(
+        grouped: Dict[str, BucketedSensitivities], trades: List[Trade]
+    ) -> FRTBCapitalReport:
+        """Run bucketing → scenarios → worst-case → aggregation locally (cheap)."""
+        rc_capitals = {}
+        for rc in RISK_CLASSES:
+            bucketed = grouped[rc]
+            caps = {}
+            for scenario in ["low", "medium", "high"]:
+                caps[scenario] = compute_bucket_capital_under_scenario(bucketed, scenario, scheduler_address=None)
+            rc_capitals[rc] = worst_case_risk_class_capital(caps["low"], caps["medium"], caps["high"])
+        return aggregate_total_capital(
+            rc_capitals["GIRR"], rc_capitals["CSR"], rc_capitals["EQ"], rc_capitals["FX"], rc_capitals["CMDTY"], trades
+        )
+
+    def _build_per_trade_graph(trades: List[Trade], bootstrap_iters: int) -> dict:
+        """
+        Build a per-trade dict-graph for pargraph execution.
+
+        Creates one DAG node per trade (maximum parallelism), then collector/
+        bucketing/scenario/aggregation nodes.  With N trades and W workers,
+        pargraph processes trades in ceil(N/W) rounds → near-linear speedup.
+        """
+        dg: dict = {}
+
+        # Per-trade sensitivity nodes
+        for i, trade in enumerate(trades):
+            dg[f"sens_{i}"] = (
+                _compute_sensitivities_for_trade,
+                trade,
+                0.04,
+                0.0001,
+                0.01,
+                0.01,
+                0.0001,
+                EQ_MC_PATHS,
+                250,
+                bootstrap_iters,
+            )
+
+        # Per-risk-class collector nodes (each depends only on its own trades)
+        for rc in RISK_CLASSES:
+            rc_indices = [i for i, t in enumerate(trades) if t.asset_class == rc]
+            dg[f"bucketed_{rc}"] = (_collect_and_bucket_results, rc, *[f"sens_{i}" for i in rc_indices])
+
+            # 3 correlation scenario nodes per risk class (15 total)
+            for scenario in ["low", "medium", "high"]:
+                dg[f"capital_{rc}_{scenario}"] = (
+                    compute_bucket_capital_under_scenario,
+                    f"bucketed_{rc}",
+                    scenario,
+                    None,
+                )
+
+            # Worst-case selection per risk class
+            dg[f"worst_{rc}"] = (
+                worst_case_risk_class_capital,
+                f"capital_{rc}_low",
+                f"capital_{rc}_medium",
+                f"capital_{rc}_high",
+            )
+
+        # Final cross-class aggregation
+        dg["trades_data"] = trades
+        dg["total"] = (
+            aggregate_total_capital,
+            "worst_GIRR",
+            "worst_CSR",
+            "worst_EQ",
+            "worst_FX",
+            "worst_CMDTY",
+            "trades_data",
+        )
+        return dg
+
+    def _build_post_sensitivity_graph(grouped: Dict[str, BucketedSensitivities], trades: List[Trade]) -> dict:
+        """
+        Build a pargraph dict-graph for the post-sensitivity phase only.
+
+        Inputs (BucketedSensitivities per risk class) are injected as constant
+        nodes; bucketing/scenario/worst-case/aggregation are DAG task nodes.
+        """
+        dg: dict = {}
+        for rc in RISK_CLASSES:
+            dg[f"bucketed_{rc}"] = grouped[rc]  # constant node
+            for scenario in ["low", "medium", "high"]:
+                dg[f"capital_{rc}_{scenario}"] = (
+                    compute_bucket_capital_under_scenario,
+                    f"bucketed_{rc}",
+                    scenario,
+                    None,
+                )
+            dg[f"worst_{rc}"] = (
+                worst_case_risk_class_capital,
+                f"capital_{rc}_low",
+                f"capital_{rc}_medium",
+                f"capital_{rc}_high",
+            )
+        dg["trades_data"] = trades
+        dg["total"] = (
+            aggregate_total_capital,
+            "worst_GIRR",
+            "worst_CSR",
+            "worst_EQ",
+            "worst_FX",
+            "worst_CMDTY",
+            "trades_data",
+        )
+        return dg
+
+    def _run_mode(mode: str) -> float:
         needs_cluster = mode in ("parfun-only", "pargraph-only", "both")
         uses_parfun = mode in ("parfun-only", "both")
         uses_pargraph = mode in ("pargraph-only", "both")
-
-        scheduler_address = args.scheduler if uses_parfun else None
 
         print(f"\n{'─'*60}")
         print(f"Mode: {mode}")
@@ -1278,17 +1519,44 @@ if __name__ == "__main__":
 
         t0 = time.perf_counter()
 
-        if uses_pargraph:
+        if mode == "sequential":
+            # No parallelism. Calls all @delayed functions in-process serially.
+            report = frtb_sbm_capital(n_trades=N_TRADES, bootstrap_iters=BOOTSTRAP_ITERS, scheduler_address=None)
+
+        elif mode == "parfun-only":
+            # Flat parfun: ALL trades in one batch → every worker busy.
+            # Bucketing/scenarios/aggregation run locally (sub-second).
+            trades = load_and_enrich_trades(n_trades=N_TRADES, seed=42)
+            with _parfun_backend_context(args.scheduler):
+                all_results = _compute_all_sensitivities_parallel(
+                    trades, n_mc_paths=EQ_MC_PATHS, bootstrap_iters=BOOTSTRAP_ITERS
+                )
+            grouped = _group_sensitivities(all_results)
+            report = _run_post_sensitivity_pipeline(grouped, trades)
+
+        elif mode == "pargraph-only":
+            # Per-trade dict-graph: one DAG node per trade.
+            # Pargraph distributes individual trades across workers.
+            # With N trades / W workers → ceil(N/W) rounds → near-linear speedup.
+            trades = load_and_enrich_trades(n_trades=N_TRADES, seed=42)
+            dict_graph = _build_per_trade_graph(trades, BOOTSTRAP_ITERS)
             engine = GraphEngine(backend=client)
-            graph_obj = frtb_sbm_capital.to_graph()
-            dict_graph, keys = graph_obj.to_dict(
-                n_trades=N_TRADES, bootstrap_iters=BOOTSTRAP_ITERS, scheduler_address=scheduler_address
-            )
-            (report,) = engine.get(dict_graph, keys)
-        else:
-            report = frtb_sbm_capital(
-                n_trades=N_TRADES, bootstrap_iters=BOOTSTRAP_ITERS, scheduler_address=scheduler_address
-            )
+            (report,) = engine.get(dict_graph, ["total"])
+
+        elif mode == "both":
+            # Phase 1 (parfun): all trades in one flat batch — workers compute
+            #   sensitivities.  Maximum parallelism, zero idle workers.
+            # Phase 2 (pargraph): DAG for bucketing/scenarios/aggregation —
+            #   workers handle scenario fan-out.  Showcases both libraries.
+            trades = load_and_enrich_trades(n_trades=N_TRADES, seed=42)
+            with _parfun_backend_context(args.scheduler):
+                all_results = _compute_all_sensitivities_parallel(
+                    trades, n_mc_paths=EQ_MC_PATHS, bootstrap_iters=BOOTSTRAP_ITERS
+                )
+            grouped = _group_sensitivities(all_results)
+            dict_graph = _build_post_sensitivity_graph(grouped, trades)
+            engine = GraphEngine(backend=client)
+            (report,) = engine.get(dict_graph, ["total"])
 
         elapsed = time.perf_counter() - t0
 
