@@ -82,10 +82,10 @@ BOOTSTRAP_ITERS = 5  # inner loop iterations for _bootstrap_yield_curve (product
 SCHEDULER_ADDRESS: str | None = None
 
 
-def _parfun_backend_context():
+def _parfun_backend_context(scheduler_address: str | None = None):
     """Return the appropriate parfun backend context for use inside @delayed nodes."""
-    if SCHEDULER_ADDRESS is not None:
-        return pf.set_parallel_backend_context("scaler_remote", scheduler_address=SCHEDULER_ADDRESS)
+    if scheduler_address is not None:
+        return pf.set_parallel_backend_context("scaler_remote", scheduler_address=scheduler_address)
     return pf.set_parallel_backend_context("local_single_process")
 
 
@@ -221,6 +221,13 @@ def _price_equity(
     """
     import random
     import math
+    import struct
+
+    # Use a local Random seeded from inputs so results are deterministic
+    # regardless of execution context (main process vs worker, call order).
+    # struct.pack gives deterministic bytes across processes (unlike hash()).
+    seed_bytes = struct.pack("ddddd", spot, vol, maturity, strike, rate)
+    local_rng = random.Random(seed_bytes)
 
     if maturity <= 0 or vol <= 0:
         return 0.0
@@ -235,7 +242,7 @@ def _price_equity(
         path_ret = 0.0
         for j in range(n_steps):
             # Must generate random numbers in a for loop
-            z = random.gauss(0.0, 1.0)
+            z = local_rng.gauss(0.0, 1.0)
             path_ret += drift + v_sqrt_dt * z
 
         ST = spot * math.exp(path_ret)
@@ -257,20 +264,24 @@ def _price_credit_bond(notional: float, coupon: float, maturity: float, risk_fre
     return pv_coupons + pv_principal
 
 
-def _bootstrap_yield_curve(base_rate: float, n_instruments: int = 30) -> np.ndarray:
+def _bootstrap_yield_curve(base_rate: float, n_instruments: int = 30, n_iters: int = 5) -> np.ndarray:
     """
     Proxy for multi-curve OIS bootstrapping — heavily non-vectorized looping.
     """
     import random
+    import struct
 
-    n_iters = BOOTSTRAP_ITERS
+    # Use a local Random seeded from inputs so the bootstrap cost doesn't
+    # pollute global random state and results are deterministic across workers.
+    seed_bytes = struct.pack("di", base_rate, n_instruments)
+    local_rng = random.Random(seed_bytes)
     A = np.zeros((n_instruments, n_instruments))
     for i in range(n_instruments):
         for j in range(n_instruments):
             val = 0.0
             # Force slow non-vectorized generation
             for k in range(n_iters):
-                val += random.gauss(0.0, 1.0)
+                val += local_rng.gauss(0.0, 1.0)
             A[i, j] = val / max(n_iters, 1)
 
     A = A @ A.T + np.eye(n_instruments) * base_rate
@@ -279,7 +290,7 @@ def _bootstrap_yield_curve(base_rate: float, n_instruments: int = 30) -> np.ndar
     for i in range(n_instruments):
         val = 0.0
         for k in range(n_iters):
-            val += random.gauss(0.0, 1.0)
+            val += local_rng.gauss(0.0, 1.0)
         b[i] = val / max(n_iters, 1)
 
     L = np.linalg.cholesky(A)
@@ -355,7 +366,7 @@ def load_and_enrich_trades(n_trades: int, seed: int = 42) -> List[Trade]:
 
 
 def _compute_girr_sensitivities_for_trade(
-    trade: Trade, base_rate: float, bump_size_ir: float, n_historical_scenarios: int
+    trade: Trade, base_rate: float, bump_size_ir: float, n_historical_scenarios: int, bootstrap_iters: int = 5
 ) -> Tuple[int, List[Sensitivity]]:
     """
     Compute GIRR delta + curvature sensitivities for a single trade across all
@@ -365,22 +376,22 @@ def _compute_girr_sensitivities_for_trade(
     Extracted from the per-trade loop in compute_girr_sensitivities so that
     parfun can parallelise across trades.
     """
-    rng = np.random.default_rng(hash(trade.trade_id) % 2**31)
+    rng = np.random.default_rng(int(trade.trade_id.split("_")[1]))
     RW_GIRR = {0.25: 1.74, 0.5: 1.74, 1: 0.74, 2: 0.58, 3: 0.49, 5: 0.44, 10: 0.40, 15: 0.39, 20: 0.38, 30: 0.38}
 
-    _bootstrap_yield_curve(base_rate, n_instruments=30)
+    _bootstrap_yield_curve(base_rate, n_instruments=30, n_iters=bootstrap_iters)
     base_npv = _price_ir_swap(trade.notional, trade.fixed_rate, trade.maturity, base_rate)
 
     trade_sens_list = []
     for tenor, rw in RW_GIRR.items():
         bumped_rate = base_rate + bump_size_ir * (tenor / max(trade.maturity, 0.25))
-        _bootstrap_yield_curve(bumped_rate, n_instruments=30)
+        _bootstrap_yield_curve(bumped_rate, n_instruments=30, n_iters=bootstrap_iters)
         bumped_npv = _price_ir_swap(trade.notional, trade.fixed_rate, trade.maturity, bumped_rate)
         delta_raw = bumped_npv - base_npv
         Ws = delta_raw * rw / bump_size_ir * 1e-4
 
-        _bootstrap_yield_curve(base_rate + 0.01, n_instruments=30)
-        _bootstrap_yield_curve(base_rate - 0.01, n_instruments=30)
+        _bootstrap_yield_curve(base_rate + 0.01, n_instruments=30, n_iters=bootstrap_iters)
+        _bootstrap_yield_curve(base_rate - 0.01, n_instruments=30, n_iters=bootstrap_iters)
         npv_up = _price_ir_swap(trade.notional, trade.fixed_rate, trade.maturity, base_rate + 0.01)
         npv_dn = _price_ir_swap(trade.notional, trade.fixed_rate, trade.maturity, base_rate - 0.01)
         cvr_up = npv_up - base_npv - delta_raw * 100
@@ -405,18 +416,27 @@ def _compute_girr_sensitivities_for_trade(
 
 @pf.parallel(split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat)
 def _compute_girr_sensitivities_parallel(
-    class_trades: List[Trade], base_rate: float, bump_size_ir: float, n_historical_scenarios: int
+    class_trades: List[Trade],
+    base_rate: float,
+    bump_size_ir: float,
+    n_historical_scenarios: int,
+    bootstrap_iters: int = 5,
 ) -> List[Tuple[int, List[Sensitivity]]]:
     """Parallelised wrapper: maps _compute_girr_sensitivities_for_trade over a chunk of trades."""
     return [
-        _compute_girr_sensitivities_for_trade(trade, base_rate, bump_size_ir, n_historical_scenarios)
+        _compute_girr_sensitivities_for_trade(trade, base_rate, bump_size_ir, n_historical_scenarios, bootstrap_iters)
         for trade in class_trades
     ]
 
 
 @delayed
 def compute_girr_sensitivities(
-    trades: List[Trade], base_rate: float = 0.04, bump_size_ir: float = 0.0001, n_historical_scenarios: int = 250
+    trades: List[Trade],
+    base_rate: float = 0.04,
+    bump_size_ir: float = 0.0001,
+    n_historical_scenarios: int = 250,
+    bootstrap_iters: int = 5,
+    scheduler_address: str | None = None,
 ) -> BucketedSensitivities:
     """
     GIRR: bump-and-reprice IR swaps across all 10 tenor points.
@@ -434,8 +454,10 @@ def compute_girr_sensitivities(
     class_trades = [t for t in trades if t.asset_class == "GIRR"]
     sensitivities: Dict[int, List[Sensitivity]] = {}
 
-    with _parfun_backend_context():
-        results = _compute_girr_sensitivities_parallel(class_trades, base_rate, bump_size_ir, n_historical_scenarios)
+    with _parfun_backend_context(scheduler_address):
+        results = _compute_girr_sensitivities_parallel(
+            class_trades, base_rate, bump_size_ir, n_historical_scenarios, bootstrap_iters
+        )
 
     for bucket_id, trade_sens_list in results:
         if bucket_id not in sensitivities:
@@ -461,7 +483,7 @@ def _compute_eq_sensitivities_for_trade(
     Extracted from the per-trade loop in compute_eq_sensitivities so that
     parfun can parallelise across trades.
     """
-    rng = np.random.default_rng(hash(trade.trade_id) % 2**31)
+    rng = np.random.default_rng(int(trade.trade_id.split("_")[1]))
     RW_EQ = {1: 0.55, 2: 0.35, 3: 0.45, 4: 0.30, 5: 0.20, 6: 0.70}
     strike = trade.spot * rng.uniform(0.9, 1.1)
     rw = RW_EQ.get(trade.bucket, 0.35)
@@ -538,6 +560,7 @@ def compute_eq_sensitivities(
     bump_size_vol: float = 0.01,
     n_mc_paths: int = EQ_MC_PATHS,
     n_historical_scenarios: int = 250,
+    scheduler_address: str | None = None,
 ) -> BucketedSensitivities:
     """
     EQ: 10-point spot Greeks ladder + 5-point vega ladder + curvature via MC.
@@ -553,7 +576,7 @@ def compute_eq_sensitivities(
     class_trades = [t for t in trades if t.asset_class == "EQ"]
     sensitivities: Dict[int, List[Sensitivity]] = {}
 
-    with _parfun_backend_context():
+    with _parfun_backend_context(scheduler_address):
         results = _compute_eq_sensitivities_parallel(
             class_trades, base_rate, bump_size_eq, bump_size_vol, n_mc_paths, n_historical_scenarios
         )
@@ -567,7 +590,7 @@ def compute_eq_sensitivities(
 
 
 def _compute_csr_sensitivities_for_trade(
-    trade: Trade, base_rate: float, bump_size_cs: float, n_historical_scenarios: int
+    trade: Trade, base_rate: float, bump_size_cs: float, n_historical_scenarios: int, bootstrap_iters: int = 5
 ) -> Tuple[int, List[Sensitivity]]:
     """
     Compute CSR delta + curvature sensitivities for a single trade across all
@@ -577,7 +600,7 @@ def _compute_csr_sensitivities_for_trade(
     Extracted from the per-trade loop in compute_csr_sensitivities so that
     parfun can parallelise across trades.
     """
-    rng = np.random.default_rng(hash(trade.trade_id) % 2**31)
+    rng = np.random.default_rng(int(trade.trade_id.split("_")[1]))
     cs_tenors = [0.5, 1, 2, 3, 5, 7, 10, 15, 20, 30]
     is_ig = trade.credit_spread < 0.01
     RW_CSR = 0.005 if is_ig else 0.05
@@ -604,7 +627,7 @@ def _compute_csr_sensitivities_for_trade(
         cvr_dn = npv_dn - base_npv + delta_raw * cs_shock / bump_size_cs
 
         # CDS spread bootstrapping proxy (30×30 Cholesky)
-        _bootstrap_yield_curve(base_rate + trade.credit_spread, n_instruments=30)
+        _bootstrap_yield_curve(base_rate + trade.credit_spread, n_instruments=30, n_iters=bootstrap_iters)
 
         trade_sens_list.append(
             Sensitivity(
@@ -625,18 +648,27 @@ def _compute_csr_sensitivities_for_trade(
 
 @pf.parallel(split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat)
 def _compute_csr_sensitivities_parallel(
-    class_trades: List[Trade], base_rate: float, bump_size_cs: float, n_historical_scenarios: int
+    class_trades: List[Trade],
+    base_rate: float,
+    bump_size_cs: float,
+    n_historical_scenarios: int,
+    bootstrap_iters: int = 5,
 ) -> List[Tuple[int, List[Sensitivity]]]:
     """Parallelised wrapper: maps _compute_csr_sensitivities_for_trade over a chunk of trades."""
     return [
-        _compute_csr_sensitivities_for_trade(trade, base_rate, bump_size_cs, n_historical_scenarios)
+        _compute_csr_sensitivities_for_trade(trade, base_rate, bump_size_cs, n_historical_scenarios, bootstrap_iters)
         for trade in class_trades
     ]
 
 
 @delayed
 def compute_csr_sensitivities(
-    trades: List[Trade], base_rate: float = 0.04, bump_size_cs: float = 0.0001, n_historical_scenarios: int = 250
+    trades: List[Trade],
+    base_rate: float = 0.04,
+    bump_size_cs: float = 0.0001,
+    n_historical_scenarios: int = 250,
+    bootstrap_iters: int = 5,
+    scheduler_address: str | None = None,
 ) -> BucketedSensitivities:
     """
     CSR: per-tenor credit spread bumps across 10 tenor points + CDS bootstrapping.
@@ -651,8 +683,10 @@ def compute_csr_sensitivities(
     class_trades = [t for t in trades if t.asset_class == "CSR"]
     sensitivities: Dict[int, List[Sensitivity]] = {}
 
-    with _parfun_backend_context():
-        results = _compute_csr_sensitivities_parallel(class_trades, base_rate, bump_size_cs, n_historical_scenarios)
+    with _parfun_backend_context(scheduler_address):
+        results = _compute_csr_sensitivities_parallel(
+            class_trades, base_rate, bump_size_cs, n_historical_scenarios, bootstrap_iters
+        )
 
     for bucket_id, trade_sens_list in results:
         if bucket_id not in sensitivities:
@@ -663,7 +697,7 @@ def compute_csr_sensitivities(
 
 
 def _compute_fx_sensitivities_for_trade(
-    trade: Trade, base_rate: float, bump_size_eq: float, n_historical_scenarios: int
+    trade: Trade, base_rate: float, bump_size_eq: float, n_historical_scenarios: int, bootstrap_iters: int = 5
 ) -> Tuple[int, List[Sensitivity]]:
     """
     Compute FX vanna/volga sensitivities for a single trade across all
@@ -674,7 +708,7 @@ def _compute_fx_sensitivities_for_trade(
     Extracted from the per-trade loop in compute_fx_sensitivities so that
     parfun can parallelise across trades.
     """
-    rng = np.random.default_rng(hash(trade.trade_id) % 2**31)
+    rng = np.random.default_rng(int(trade.trade_id.split("_")[1]))
     vol_strikes = [0.10, 0.25, 0.50, 0.75, 0.90]
     fx_tenors = [1.0, 2.0]
 
@@ -692,7 +726,7 @@ def _compute_fx_sensitivities_for_trade(
             cvr_dn = npv_dn - base_npv + delta_raw * 15
 
             # FX cross-currency basis bootstrap proxy (15-instrument curve)
-            _bootstrap_yield_curve(base_rate, n_instruments=15)
+            _bootstrap_yield_curve(base_rate, n_instruments=15, n_iters=bootstrap_iters)
 
             trade_sens_list.append(
                 Sensitivity(
@@ -713,18 +747,27 @@ def _compute_fx_sensitivities_for_trade(
 
 @pf.parallel(split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat)
 def _compute_fx_sensitivities_parallel(
-    class_trades: List[Trade], base_rate: float, bump_size_eq: float, n_historical_scenarios: int
+    class_trades: List[Trade],
+    base_rate: float,
+    bump_size_eq: float,
+    n_historical_scenarios: int,
+    bootstrap_iters: int = 5,
 ) -> List[Tuple[int, List[Sensitivity]]]:
     """Parallelised wrapper: maps _compute_fx_sensitivities_for_trade over a chunk of trades."""
     return [
-        _compute_fx_sensitivities_for_trade(trade, base_rate, bump_size_eq, n_historical_scenarios)
+        _compute_fx_sensitivities_for_trade(trade, base_rate, bump_size_eq, n_historical_scenarios, bootstrap_iters)
         for trade in class_trades
     ]
 
 
 @delayed
 def compute_fx_sensitivities(
-    trades: List[Trade], base_rate: float = 0.04, bump_size_eq: float = 0.01, n_historical_scenarios: int = 250
+    trades: List[Trade],
+    base_rate: float = 0.04,
+    bump_size_eq: float = 0.01,
+    n_historical_scenarios: int = 250,
+    bootstrap_iters: int = 5,
+    scheduler_address: str | None = None,
 ) -> BucketedSensitivities:
     """
     FX: vanna/volga surface — 5 vol-delta pillars × 2 tenors per trade.
@@ -739,8 +782,10 @@ def compute_fx_sensitivities(
     class_trades = [t for t in trades if t.asset_class == "FX"]
     sensitivities: Dict[int, List[Sensitivity]] = {}
 
-    with _parfun_backend_context():
-        results = _compute_fx_sensitivities_parallel(class_trades, base_rate, bump_size_eq, n_historical_scenarios)
+    with _parfun_backend_context(scheduler_address):
+        results = _compute_fx_sensitivities_parallel(
+            class_trades, base_rate, bump_size_eq, n_historical_scenarios, bootstrap_iters
+        )
 
     for bucket_id, trade_sens_list in results:
         if bucket_id not in sensitivities:
@@ -751,7 +796,7 @@ def compute_fx_sensitivities(
 
 
 def _compute_cmdty_sensitivities_for_trade(
-    trade: Trade, base_rate: float, bump_size_eq: float, n_historical_scenarios: int
+    trade: Trade, base_rate: float, bump_size_eq: float, n_historical_scenarios: int, bootstrap_iters: int = 5
 ) -> Tuple[int, List[Sensitivity]]:
     """
     Compute CMDTY futures-curve sensitivities for a single trade across all
@@ -762,7 +807,7 @@ def _compute_cmdty_sensitivities_for_trade(
     Extracted from the per-trade loop in compute_cmdty_sensitivities so that
     parfun can parallelise across trades.
     """
-    rng = np.random.default_rng(hash(trade.trade_id) % 2**31)
+    rng = np.random.default_rng(int(trade.trade_id.split("_")[1]))
     RW_CMDTY = {1: 0.30, 2: 0.35, 3: 0.60, 4: 0.80, 5: 0.40, 6: 0.45, 7: 0.20, 8: 0.35, 9: 0.25}
     cmdty_tenors = [0.25, 0.5, 1, 2, 3, 5]
     grade_diffs = [-0.02, 0.0, 0.02]
@@ -778,7 +823,7 @@ def _compute_cmdty_sensitivities_for_trade(
             Ws = delta_raw * rw / bump_size_eq
 
             # Commodity convenience-yield curve bootstrap (20-instrument)
-            _bootstrap_yield_curve(base_rate + gd, n_instruments=20)
+            _bootstrap_yield_curve(base_rate + gd, n_instruments=20, n_iters=bootstrap_iters)
 
             trade_sens_list.append(
                 Sensitivity(
@@ -799,18 +844,27 @@ def _compute_cmdty_sensitivities_for_trade(
 
 @pf.parallel(split=pf.per_argument(class_trades=pf.py_list.by_chunk), combine_with=pf.py_list.concat)
 def _compute_cmdty_sensitivities_parallel(
-    class_trades: List[Trade], base_rate: float, bump_size_eq: float, n_historical_scenarios: int
+    class_trades: List[Trade],
+    base_rate: float,
+    bump_size_eq: float,
+    n_historical_scenarios: int,
+    bootstrap_iters: int = 5,
 ) -> List[Tuple[int, List[Sensitivity]]]:
     """Parallelised wrapper: maps _compute_cmdty_sensitivities_for_trade over a chunk of trades."""
     return [
-        _compute_cmdty_sensitivities_for_trade(trade, base_rate, bump_size_eq, n_historical_scenarios)
+        _compute_cmdty_sensitivities_for_trade(trade, base_rate, bump_size_eq, n_historical_scenarios, bootstrap_iters)
         for trade in class_trades
     ]
 
 
 @delayed
 def compute_cmdty_sensitivities(
-    trades: List[Trade], base_rate: float = 0.04, bump_size_eq: float = 0.01, n_historical_scenarios: int = 250
+    trades: List[Trade],
+    base_rate: float = 0.04,
+    bump_size_eq: float = 0.01,
+    n_historical_scenarios: int = 250,
+    bootstrap_iters: int = 5,
+    scheduler_address: str | None = None,
 ) -> BucketedSensitivities:
     """
     CMDTY: 2D futures-curve bump — 6 tenors × 3 grade differentials per trade.
@@ -824,8 +878,10 @@ def compute_cmdty_sensitivities(
     class_trades = [t for t in trades if t.asset_class == "CMDTY"]
     sensitivities: Dict[int, List[Sensitivity]] = {}
 
-    with _parfun_backend_context():
-        results = _compute_cmdty_sensitivities_parallel(class_trades, base_rate, bump_size_eq, n_historical_scenarios)
+    with _parfun_backend_context(scheduler_address):
+        results = _compute_cmdty_sensitivities_parallel(
+            class_trades, base_rate, bump_size_eq, n_historical_scenarios, bootstrap_iters
+        )
 
     for bucket_id, trade_sens_list in results:
         if bucket_id not in sensitivities:
@@ -889,7 +945,9 @@ def _compute_bucket_capitals_parallel(
 
 
 @delayed
-def compute_bucket_capital_under_scenario(bucketed: BucketedSensitivities, corr_scenario: str) -> BucketCapital:
+def compute_bucket_capital_under_scenario(
+    bucketed: BucketedSensitivities, corr_scenario: str, scheduler_address: str | None = None
+) -> BucketCapital:
     """
     Apply FRTB aggregation formula within and across buckets.
 
@@ -920,7 +978,7 @@ def compute_bucket_capital_under_scenario(bucketed: BucketedSensitivities, corr_
     gamma = min(max(CROSS_BUCKET_CORR.get(risk_class, 0.0) * scenario_scalar, 0.0), 1.0)
 
     bucket_items = list(bucketed.by_bucket.items())
-    with _parfun_backend_context():
+    with _parfun_backend_context(scheduler_address):
         results = _compute_bucket_capitals_parallel(bucket_items, rho_eff)
 
     kb_per_bucket: Dict[int, float] = {bid: Kb for bid, Kb, _ in results}
@@ -1032,7 +1090,9 @@ def aggregate_total_capital(
 
 
 @graph
-def frtb_sbm_capital(n_trades: int, seed: int = 42) -> FRTBCapitalReport:
+def frtb_sbm_capital(
+    n_trades: int, seed: int = 42, bootstrap_iters: int = 5, scheduler_address: str | None = None
+) -> FRTBCapitalReport:
     """
     FRTB Sensitivity-Based Method capital calculation pipeline.
 
@@ -1065,31 +1125,67 @@ def frtb_sbm_capital(n_trades: int, seed: int = 42) -> FRTBCapitalReport:
 
     # Level 2: 5 parallel sensitivity nodes — one dedicated function per asset class
     # pargraph can see these as independent nodes and schedule them concurrently
-    bucketed_girr = compute_girr_sensitivities(trades)
-    bucketed_eq = compute_eq_sensitivities(trades)
-    bucketed_csr = compute_csr_sensitivities(trades)
-    bucketed_fx = compute_fx_sensitivities(trades)
-    bucketed_cmdty = compute_cmdty_sensitivities(trades)
+    bucketed_girr = compute_girr_sensitivities(
+        trades, bootstrap_iters=bootstrap_iters, scheduler_address=scheduler_address
+    )
+    bucketed_eq = compute_eq_sensitivities(trades, scheduler_address=scheduler_address)
+    bucketed_csr = compute_csr_sensitivities(
+        trades, bootstrap_iters=bootstrap_iters, scheduler_address=scheduler_address
+    )
+    bucketed_fx = compute_fx_sensitivities(trades, bootstrap_iters=bootstrap_iters, scheduler_address=scheduler_address)
+    bucketed_cmdty = compute_cmdty_sensitivities(
+        trades, bootstrap_iters=bootstrap_iters, scheduler_address=scheduler_address
+    )
 
     # Level 4: 15 parallel nodes (5 classes × 3 scenarios)
     # Each fires as soon as its parent sensitivity node completes
-    bucketed_capital_girr_low = compute_bucket_capital_under_scenario(bucketed_girr, "low")
-    bucketed_capital_eq_low = compute_bucket_capital_under_scenario(bucketed_eq, "low")
-    bucketed_capital_csr_low = compute_bucket_capital_under_scenario(bucketed_csr, "low")
-    bucketed_capital_fx_low = compute_bucket_capital_under_scenario(bucketed_fx, "low")
-    bucketed_capital_cmdty_low = compute_bucket_capital_under_scenario(bucketed_cmdty, "low")
+    bucketed_capital_girr_low = compute_bucket_capital_under_scenario(
+        bucketed_girr, "low", scheduler_address=scheduler_address
+    )
+    bucketed_capital_eq_low = compute_bucket_capital_under_scenario(
+        bucketed_eq, "low", scheduler_address=scheduler_address
+    )
+    bucketed_capital_csr_low = compute_bucket_capital_under_scenario(
+        bucketed_csr, "low", scheduler_address=scheduler_address
+    )
+    bucketed_capital_fx_low = compute_bucket_capital_under_scenario(
+        bucketed_fx, "low", scheduler_address=scheduler_address
+    )
+    bucketed_capital_cmdty_low = compute_bucket_capital_under_scenario(
+        bucketed_cmdty, "low", scheduler_address=scheduler_address
+    )
 
-    bucketed_capital_girr_medium = compute_bucket_capital_under_scenario(bucketed_girr, "medium")
-    bucketed_capital_eq_medium = compute_bucket_capital_under_scenario(bucketed_eq, "medium")
-    bucketed_capital_csr_medium = compute_bucket_capital_under_scenario(bucketed_csr, "medium")
-    bucketed_capital_fx_medium = compute_bucket_capital_under_scenario(bucketed_fx, "medium")
-    bucketed_capital_cmdty_medium = compute_bucket_capital_under_scenario(bucketed_cmdty, "medium")
+    bucketed_capital_girr_medium = compute_bucket_capital_under_scenario(
+        bucketed_girr, "medium", scheduler_address=scheduler_address
+    )
+    bucketed_capital_eq_medium = compute_bucket_capital_under_scenario(
+        bucketed_eq, "medium", scheduler_address=scheduler_address
+    )
+    bucketed_capital_csr_medium = compute_bucket_capital_under_scenario(
+        bucketed_csr, "medium", scheduler_address=scheduler_address
+    )
+    bucketed_capital_fx_medium = compute_bucket_capital_under_scenario(
+        bucketed_fx, "medium", scheduler_address=scheduler_address
+    )
+    bucketed_capital_cmdty_medium = compute_bucket_capital_under_scenario(
+        bucketed_cmdty, "medium", scheduler_address=scheduler_address
+    )
 
-    bucketed_capital_girr_high = compute_bucket_capital_under_scenario(bucketed_girr, "high")
-    bucketed_capital_eq_high = compute_bucket_capital_under_scenario(bucketed_eq, "high")
-    bucketed_capital_csr_high = compute_bucket_capital_under_scenario(bucketed_csr, "high")
-    bucketed_capital_fx_high = compute_bucket_capital_under_scenario(bucketed_fx, "high")
-    bucketed_capital_cmdty_high = compute_bucket_capital_under_scenario(bucketed_cmdty, "high")
+    bucketed_capital_girr_high = compute_bucket_capital_under_scenario(
+        bucketed_girr, "high", scheduler_address=scheduler_address
+    )
+    bucketed_capital_eq_high = compute_bucket_capital_under_scenario(
+        bucketed_eq, "high", scheduler_address=scheduler_address
+    )
+    bucketed_capital_csr_high = compute_bucket_capital_under_scenario(
+        bucketed_csr, "high", scheduler_address=scheduler_address
+    )
+    bucketed_capital_fx_high = compute_bucket_capital_under_scenario(
+        bucketed_fx, "high", scheduler_address=scheduler_address
+    )
+    bucketed_capital_cmdty_high = compute_bucket_capital_under_scenario(
+        bucketed_cmdty, "high", scheduler_address=scheduler_address
+    )
 
     # Level 5: worst-case selection — 5 parallel nodes
     # Each waits for its own 3 scenario children only
@@ -1163,13 +1259,11 @@ if __name__ == "__main__":
     modes_to_run = MODES[:-1] if args.mode == "all" else [args.mode]
 
     def _run_mode(mode: str) -> None:
-        global SCHEDULER_ADDRESS
-
         needs_cluster = mode in ("parfun-only", "pargraph-only", "both")
         uses_parfun = mode in ("parfun-only", "both")
         uses_pargraph = mode in ("pargraph-only", "both")
 
-        SCHEDULER_ADDRESS = args.scheduler if uses_parfun else None
+        scheduler_address = args.scheduler if uses_parfun else None
 
         print(f"\n{'─'*60}")
         print(f"Mode: {mode}")
@@ -1187,10 +1281,14 @@ if __name__ == "__main__":
         if uses_pargraph:
             engine = GraphEngine(backend=client)
             graph_obj = frtb_sbm_capital.to_graph()
-            dict_graph, keys = graph_obj.to_dict(n_trades=N_TRADES)
+            dict_graph, keys = graph_obj.to_dict(
+                n_trades=N_TRADES, bootstrap_iters=BOOTSTRAP_ITERS, scheduler_address=scheduler_address
+            )
             (report,) = engine.get(dict_graph, keys)
         else:
-            report = frtb_sbm_capital(n_trades=N_TRADES)
+            report = frtb_sbm_capital(
+                n_trades=N_TRADES, bootstrap_iters=BOOTSTRAP_ITERS, scheduler_address=scheduler_address
+            )
 
         elapsed = time.perf_counter() - t0
 
