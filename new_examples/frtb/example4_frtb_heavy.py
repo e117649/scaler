@@ -74,7 +74,7 @@ from pargraph import graph, delayed
 # adjustments ------------------
 N_TRADES = 2
 EQ_MC_PATHS = 500
-BOOTSTRAP_ITERS = 5000  # inner loop iterations for _bootstrap_yield_curve
+BOOTSTRAP_ITERS = 5  # inner loop iterations for _bootstrap_yield_curve (production: 5000)
 # ------------------------------
 
 # When set to a tcp:// address, @delayed nodes use scaler_remote for nested @pf.parallel work.
@@ -1116,45 +1116,104 @@ def frtb_sbm_capital(n_trades: int, seed: int = 42) -> FRTBCapitalReport:
 
 
 # ── Demo runner ───────────────────────────────────────────────────────────────
+#
+# Four execution modes to benchmark pargraph and parfun independently:
+#
+#   sequential     – no parallelism at all (single-process baseline)
+#   parfun-only    – nodes run sequentially, parfun parallelises trades via Scaler
+#   pargraph-only  – DAG nodes dispatched to Scaler, parfun disabled inside nodes
+#   both           – DAG nodes on Scaler + nested parfun on Scaler
+#
+# Usage:
+#   # start cluster:  PYTHONPATH=. scaler cluster.toml
+#   python example4_frtb_heavy.py --mode sequential
+#   python example4_frtb_heavy.py --mode parfun-only   --scheduler tcp://127.0.0.1:6378
+#   python example4_frtb_heavy.py --mode pargraph-only  --scheduler tcp://127.0.0.1:6378
+#   python example4_frtb_heavy.py --mode both            --scheduler tcp://127.0.0.1:6378
+#
+#   # run all four back-to-back:
+#   python example4_frtb_heavy.py --mode all --scheduler tcp://127.0.0.1:6378
+
 if __name__ == "__main__":
     import argparse
     import time
     from pargraph import GraphEngine
     from scaler import Client
 
+    MODES = ["sequential", "parfun-only", "pargraph-only", "both", "all"]
+
     parser = argparse.ArgumentParser(description="FRTB SBM Capital – pargraph + parfun + Scaler demo")
+    parser.add_argument("--mode", choices=MODES, default="both", help="execution mode (default: both)")
     parser.add_argument(
         "--scheduler", default="tcp://127.0.0.1:6378", help="Scaler scheduler address (default: tcp://127.0.0.1:6378)"
     )
+    parser.add_argument("--n-trades", type=int, default=N_TRADES, help=f"number of trades (default: {N_TRADES})")
+    parser.add_argument(
+        "--bootstrap-iters",
+        type=int,
+        default=BOOTSTRAP_ITERS,
+        help=f"bootstrap inner-loop iterations (default: {BOOTSTRAP_ITERS})",
+    )
     args = parser.parse_args()
 
-    SCHEDULER_ADDRESS = args.scheduler
+    # Apply CLI overrides to module-level knobs
+    N_TRADES = args.n_trades
+    BOOTSTRAP_ITERS = args.bootstrap_iters
 
-    print("Running FRTB SBM Capital Pipeline (HEAVY VERSION)...")
-    print(f"Connecting to Scaler scheduler at {SCHEDULER_ADDRESS}")
-    print("─" * 60)
+    modes_to_run = MODES[:-1] if args.mode == "all" else [args.mode]
 
-    client = Client(address=SCHEDULER_ADDRESS)
-    engine = GraphEngine(backend=client)
+    def _run_mode(mode: str) -> None:
+        global SCHEDULER_ADDRESS
 
-    # Path 1: pargraph DAG executed on Scaler, nested parfun also on Scaler
-    t0 = time.perf_counter()
-    graph_obj = frtb_sbm_capital.to_graph()
-    dict_graph, keys = graph_obj.to_dict(n_trades=N_TRADES)
-    (report,) = engine.get(dict_graph, keys)
-    elapsed = time.perf_counter() - t0
+        needs_cluster = mode in ("parfun-only", "pargraph-only", "both")
+        uses_parfun = mode in ("parfun-only", "both")
+        uses_pargraph = mode in ("pargraph-only", "both")
 
-    print(f"\n{'='*60}")
-    print(f"[pargraph + scaler] Total FRTB SBM Capital: ${report.total_capital / 1e6:,.1f}M")
-    print(f"Elapsed wall time: {elapsed/60:.1f} min")
+        SCHEDULER_ADDRESS = args.scheduler if uses_parfun else None
 
-    # Path 2: direct @graph call with nested parfun on Scaler
-    t0 = time.perf_counter()
-    report = frtb_sbm_capital(n_trades=N_TRADES)
-    elapsed = time.perf_counter() - t0
+        print(f"\n{'─'*60}")
+        print(f"Mode: {mode}")
+        print(f"  pargraph (DAG-level):  {'ON' if uses_pargraph else 'OFF'}")
+        print(f"  parfun  (trade-level): {'ON' if uses_parfun else 'OFF'}")
+        print(f"  N_TRADES={N_TRADES}  BOOTSTRAP_ITERS={BOOTSTRAP_ITERS}")
 
-    print(f"\n{'='*60}")
-    print(f"[direct call] Total FRTB SBM Capital: ${report.total_capital / 1e6:,.1f}M")
-    print(f"Elapsed wall time: {elapsed/60:.1f} min")
+        client = None
+        if needs_cluster:
+            client = Client(address=args.scheduler)
+            print(f"  Connected to {args.scheduler}")
 
-    client.disconnect()
+        t0 = time.perf_counter()
+
+        if uses_pargraph:
+            engine = GraphEngine(backend=client)
+            graph_obj = frtb_sbm_capital.to_graph()
+            dict_graph, keys = graph_obj.to_dict(n_trades=N_TRADES)
+            (report,) = engine.get(dict_graph, keys)
+        else:
+            report = frtb_sbm_capital(n_trades=N_TRADES)
+
+        elapsed = time.perf_counter() - t0
+
+        print(f"  Total FRTB SBM Capital: ${report.total_capital / 1e6:,.1f}M")
+        print(f"  Wall time: {elapsed:.1f}s ({elapsed/60:.1f} min)")
+
+        if client is not None:
+            client.disconnect()
+
+        return elapsed
+
+    print("FRTB SBM Capital Pipeline – Benchmark")
+    print(f"{'='*60}")
+
+    results = {}
+    for mode in modes_to_run:
+        results[mode] = _run_mode(mode)
+
+    if len(results) > 1:
+        print(f"\n{'='*60}")
+        print("Summary:")
+        baseline = results.get("sequential")
+        for mode, elapsed in results.items():
+            speedup = f"  ({baseline / elapsed:.1f}x vs sequential)" if baseline and mode != "sequential" else ""
+            print(f"  {mode:20s}  {elapsed:8.1f}s{speedup}")
+        print(f"{'='*60}")
