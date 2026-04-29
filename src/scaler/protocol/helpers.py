@@ -44,10 +44,8 @@ def dict_to_capabilities(capabilities: dict[str, int] | list[capnp.TaskCapabilit
     helper rebuilds every entry as a new struct so both ``name`` and ``value`` reach the wire.
     """
     if isinstance(capabilities, dict):
-        items = capabilities.items()
-    else:
-        items = ((c.name, c.value) for c in capabilities)
-    return [capnp.TaskCapability(name=name, value=value) for name, value in items]
+        return [capnp.TaskCapability(name=name, value=value) for name, value in capabilities.items()]
+    return [capnp.TaskCapability(name=c.name, value=c.value) for c in capabilities]
 
 
 PROTOCOL: bidict.bidict[str, type] = bidict.bidict(
