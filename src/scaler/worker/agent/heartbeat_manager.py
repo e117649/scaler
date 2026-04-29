@@ -6,6 +6,7 @@ import psutil
 from scaler.config.types.address import AddressConfig, SocketType
 from scaler.io.mixins import AsyncConnector, AsyncObjectStorageConnector
 from scaler.protocol.capnp import ProcessorStatus, Resource, WorkerHeartbeat, WorkerHeartbeatEcho
+from scaler.protocol.helpers import dict_to_capabilities
 from scaler.utility.mixins import Looper
 from scaler.worker.agent.mixins import HeartbeatManager, ProcessorManager, TaskManager, TimeoutManager
 from scaler.worker.agent.processor_holder import ProcessorHolder
@@ -90,7 +91,7 @@ class VanillaHeartbeatManager(Looper, HeartbeatManager):
                 latencyUS=self._latency_us,
                 taskLock=self._processor_manager.can_accept_task(),
                 processors=[self.__get_processor_status_from_holder(processor) for processor in processors],
-                capabilities=self._capabilities,
+                capabilities=dict_to_capabilities(self._capabilities),
                 workerManagerID=self._worker_manager_id,
             )
         )

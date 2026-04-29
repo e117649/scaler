@@ -361,7 +361,7 @@ class VanillaTaskController(TaskController, Looper, Reporter):
     async def __send_monitor(self, task_id: TaskID, function_name: bytes, metadata: bytes = b""):
         worker = self._worker_controller.get_worker_by_task_id(task_id)
         task_state = self._task_state_manager.get_state_machine(task_id).current_state()
-        capabilities = self._task_id_to_task[task_id].capabilities if task_id in self._task_id_to_task else {}
+        capabilities = self._task_id_to_task[task_id].capabilities if task_id in self._task_id_to_task else []
         await self._binder_monitor.send(
             StateTask(
                 taskId=task_id,

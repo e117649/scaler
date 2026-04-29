@@ -16,7 +16,7 @@ from scaler.protocol.capnp import (
     TaskResult,
     TaskResultType,
 )
-from scaler.protocol.helpers import capabilities_to_dict
+from scaler.protocol.helpers import capabilities_to_dict, dict_to_capabilities
 from scaler.scheduler.controllers.config_controller import VanillaConfigController
 from scaler.scheduler.controllers.mixins import ClientController, GraphTaskController, ObjectController, TaskController
 from scaler.utility.graph.topological_sorter import TopologicalSorter
@@ -238,7 +238,7 @@ class VanillaGraphTaskController(GraphTaskController, Looper, Reporter):
                     )
                     for argument in task_info.task.functionArgs
                 ],
-                capabilities=capabilities_to_dict(task_info.task.capabilities),
+                capabilities=dict_to_capabilities(capabilities_to_dict(task_info.task.capabilities)),
             )
 
             await self._task_controller.on_task_new(task)

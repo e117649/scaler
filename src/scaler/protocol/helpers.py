@@ -34,6 +34,22 @@ def capabilities_to_dict(capabilities) -> Dict[str, int]:
     return {capability.name: capability.value for capability in capabilities}
 
 
+def dict_to_capabilities(capabilities: dict[str, int] | list[capnp.TaskCapability]) -> list[capnp.TaskCapability]:
+    """Convert a dict[str, int] of capabilities into a list of capnp ``TaskCapability`` structs.
+
+    The capnp Python extension does not natively populate a ``List(TaskCapability)`` field from a
+    Python ``dict`` — only the dict's keys are iterated, leaving every struct's ``value`` at its
+    default. This helper builds the list explicitly so both ``name`` and ``value`` reach the wire.
+
+    Accepts either a dict or an existing iterable of ``TaskCapability``-like objects (passed through
+    unchanged) for caller convenience.
+    """
+    if not isinstance(capabilities, dict):
+        return list(capabilities)
+
+    return [capnp.TaskCapability(name=name, value=value) for name, value in capabilities.items()]
+
+
 PROTOCOL: bidict.bidict[str, type] = bidict.bidict(
     {
         "task": capnp.Task,

@@ -4,6 +4,7 @@ import unittest
 from typing import Dict, List, Optional
 
 from scaler.protocol.capnp import Resource, Task, WorkerHeartbeat, WorkerManagerCommandType, WorkerManagerHeartbeat
+from scaler.protocol.helpers import capabilities_to_dict
 from scaler.scheduler.controllers.policies.library.utility import create_policy
 from scaler.scheduler.controllers.policies.simple_policy.scaling.types import WorkerManagerSnapshot
 from scaler.scheduler.controllers.policies.waterfall_v1.scaling.types import WaterfallRule
@@ -496,7 +497,7 @@ class TestWaterfallCapabilities(unittest.TestCase):
 
         self.assertEqual(len(commands), 1)
         self.assertEqual(commands[0].command, WorkerManagerCommandType.startWorkers)
-        self.assertIn("gpu", commands[0].capabilities)
+        self.assertIn("gpu", capabilities_to_dict(commands[0].capabilities))
 
     def test_unmet_capability_skips_incapable_higher_priority(self):
         """Higher-priority manager that cannot provide the capability should be skipped."""
@@ -524,7 +525,7 @@ class TestWaterfallCapabilities(unittest.TestCase):
         commands_cpu = _imperative(commands_cpu)
         # Falls through to generic start (tasks exist, no workers) — but capability check returns empty
         # because manager_cpu can't provide gpu. Generic start still fires.
-        gpu_commands = [c for c in commands_cpu if c.capabilities.get("gpu")]
+        gpu_commands = [c for c in commands_cpu if capabilities_to_dict(c.capabilities).get("gpu")]
         self.assertEqual(len(gpu_commands), 0)
 
         # manager_gpu heartbeat: can provide gpu, should issue start with gpu
@@ -535,7 +536,7 @@ class TestWaterfallCapabilities(unittest.TestCase):
         commands_gpu = _imperative(commands_gpu)
         self.assertEqual(len(commands_gpu), 1)
         self.assertEqual(commands_gpu[0].command, WorkerManagerCommandType.startWorkers)
-        self.assertIn("gpu", commands_gpu[0].capabilities)
+        self.assertIn("gpu", capabilities_to_dict(commands_gpu[0].capabilities))
 
     def test_unmet_capability_respects_waterfall_priority(self):
         """When multiple managers can provide the capability, higher priority should start first."""
@@ -562,7 +563,7 @@ class TestWaterfallCapabilities(unittest.TestCase):
         )
         commands_a = _imperative(commands_a)
         self.assertEqual(len(commands_a), 1)
-        self.assertIn("gpu", commands_a[0].capabilities)
+        self.assertIn("gpu", capabilities_to_dict(commands_a[0].capabilities))
 
         # manager_b should NOT start (higher-priority manager_a has capacity)
         heartbeat_b = _create_worker_manager_heartbeat(b"manager_b", capabilities={"gpu": 4})
@@ -600,7 +601,7 @@ class TestWaterfallCapabilities(unittest.TestCase):
         )
         commands = _imperative(commands)
         self.assertEqual(len(commands), 1)
-        self.assertIn("gpu", commands[0].capabilities)
+        self.assertIn("gpu", capabilities_to_dict(commands[0].capabilities))
 
     def test_capability_check_precedes_ratio(self):
         """Unmet capabilities should trigger start even when overall ratio is within bounds."""
@@ -626,7 +627,7 @@ class TestWaterfallCapabilities(unittest.TestCase):
         )
         commands = _imperative(commands)
         self.assertEqual(len(commands), 1)
-        self.assertIn("gpu", commands[0].capabilities)
+        self.assertIn("gpu", capabilities_to_dict(commands[0].capabilities))
 
     def test_start_command_includes_capabilities(self):
         """StartWorkers command for unmet capability should carry the exact capability dict."""
@@ -644,7 +645,7 @@ class TestWaterfallCapabilities(unittest.TestCase):
         commands = policy.get_scaling_commands(snapshot, heartbeat, [], {}, manager_snapshots)
         commands = _imperative(commands)
         self.assertEqual(len(commands), 1)
-        self.assertEqual(commands[0].capabilities, {"gpu": 2, "nvlink": 1})
+        self.assertEqual(capabilities_to_dict(commands[0].capabilities), {"gpu": 2, "nvlink": 1})
 
     def test_shutdown_prefers_no_capability_workers(self):
         """When shutting down, workers without capabilities should be shut down first."""
@@ -711,7 +712,7 @@ class TestWaterfallCapabilities(unittest.TestCase):
         commands = _imperative(commands)
         self.assertEqual(len(commands), 1)
         self.assertEqual(commands[0].command, WorkerManagerCommandType.startWorkers)
-        self.assertEqual(commands[0].capabilities, {})
+        self.assertEqual(capabilities_to_dict(commands[0].capabilities), {})
 
     def test_value_agnostic_matching(self):
         """Capability matching should be key-only; values are ignored."""

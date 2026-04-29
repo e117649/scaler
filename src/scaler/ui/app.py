@@ -871,7 +871,7 @@ class WebUIApp:
             self._worker_processors.pop(w, None)
             self._worker_manager_map.pop(w, None)
             self._task_stream.handle_worker_state(
-                StateWorker(workerId=WorkerID(w.encode()), state=WorkerState.disconnected, capabilities={})
+                StateWorker(workerId=WorkerID(w.encode()), state=WorkerState.disconnected, capabilities=[])
             )
 
         # Aggregate summary stats from workers into each worker manager entry
@@ -905,7 +905,9 @@ class WebUIApp:
         state = state_worker.state
 
         if state == WorkerState.connected:
-            self._worker_capabilities[worker_id] = state_worker.capabilities
+            # Store capabilities as a {name: value} dict so downstream consumers
+            # (e.g. _process_scheduler -> _display_capabilities) can call .keys() on them.
+            self._worker_capabilities[worker_id] = capabilities_to_dict(state_worker.capabilities)
         elif state == WorkerState.disconnected:
             self._workers_data.pop(worker_id, None)
             self._worker_capabilities.pop(worker_id, None)
