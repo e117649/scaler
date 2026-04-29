@@ -1113,6 +1113,7 @@ class WebUIApp:
             "scheduler": sched,
             "workers": list(self._workers_data.values()),
             "task_log": initial_task_log,
+            "task_log_max_size": TASK_LOG_MAX_SIZE,
             "task_stream": stream_data,
             "memory_chart": memory_data,
             "processors": self._build_processors_data(),

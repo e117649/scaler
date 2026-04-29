@@ -16,7 +16,7 @@ from scaler.protocol.capnp import (
     TaskState,
     TaskTransition,
 )
-from scaler.protocol.helpers import capabilities_to_dict
+from scaler.protocol.helpers import capabilities_to_dict, dict_to_capabilities
 from scaler.scheduler.controllers.config_controller import VanillaConfigController
 from scaler.scheduler.controllers.mixins import (
     ClientController,
@@ -368,7 +368,7 @@ class VanillaTaskController(TaskController, Looper, Reporter):
                 functionName=function_name,
                 state=task_state,
                 worker=worker,
-                capabilities=capabilities,
+                capabilities=dict_to_capabilities(capabilities),
                 metadata=metadata,
             )
         )
