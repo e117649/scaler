@@ -50,6 +50,7 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_tabs.tabs",
     "nbsphinx",
+    "jupyterlite_sphinx",
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -97,3 +98,25 @@ copybutton_prompt_is_regexp = True
 
 nbsphinx_execute = "never"
 nbsphinx_codecell_lexer = "python"
+
+# -- JupyterLite (Try in your browser) --------------------------------------
+# jupyterlite-sphinx builds a JupyterLite (Pyodide) site under build/html/lite
+# during ``make html`` and exposes the listed notebooks inside it.
+jupyterlite_contents = ["gallery/*.ipynb"]
+
+# Inject a styled "Try in your browser" banner at the top of every rendered
+# notebook so users landing directly on a notebook page see the option.
+nbsphinx_prolog = r"""
+{% set notebook = env.doc2path(env.docname, base=None).split('/')[-1] %}
+
+.. raw:: html
+
+    <div class="try-in-browser-banner">
+      <a class="try-in-browser"
+         href="../lite/lab/index.html?path={{ notebook }}"
+         target="_blank"
+         rel="noopener">
+        ▶ Try this notebook in your browser (no install)
+      </a>
+    </div>
+"""

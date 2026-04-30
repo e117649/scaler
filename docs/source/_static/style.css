@@ -77,3 +77,24 @@ section.hidden-page-title > h1:first-child,
 div.hidden-page-title > h1:first-child {
     display: none;
 }
+
+/* JupyterLite "Try in your browser" button. Banner above each notebook page. */
+.try-in-browser {
+    display: inline-block;
+    padding: 0.4em 0.9em;
+    margin: 0.2em 0;
+    background: linear-gradient(135deg, #0a8a6b, #0a6f8a);
+    color: #ffffff !important;
+    font-weight: 600;
+    border-radius: 0.4em;
+    text-decoration: none !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.try-in-browser:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+.try-in-browser-banner {
+    margin: 0.5em 0 1.2em 0;
+}

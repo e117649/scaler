@@ -14,7 +14,7 @@
 #       Bump versions through variables, not hard coded strings.
 
 BOOST_VERSION="1.88.0"
-CAPNP_VERSION="1.0.1"
+CAPNP_VERSION="1.1.0"
 UV_VERSION="1.51.0"
 
 THIRD_PARTY_DIRECTORY="./thirdparties"
