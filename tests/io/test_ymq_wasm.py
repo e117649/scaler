@@ -8,6 +8,7 @@ WebSocket-like object so that we can drive the receive path directly.
 
 import struct
 import unittest
+import unittest.mock
 from typing import Any, List, Optional
 
 from scaler.io.ymq import _ymq_wasm
@@ -359,6 +360,76 @@ class ErrorCodeTest(unittest.TestCase):
     def test_make_exception_dispatches_to_subclass(self) -> None:
         exc = _ymq_wasm._make_exception(ErrorCode.ConnectorSocketClosedByRemoteEnd, "boom")
         self.assertIsInstance(exc, ConnectorSocketClosedByRemoteEndError)
+
+
+class _RunSyncShim:
+    """Drive a coroutine/Future to completion on a fresh event loop.
+
+    Stand-in for ``pyodide.ffi.run_sync`` so the JSPI-only sync helpers can
+    be exercised under CPython.
+    """
+
+    def __init__(self) -> None:
+        import asyncio
+
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+
+    def __call__(self, awaitable: Any) -> Any:
+        return self.loop.run_until_complete(awaitable)
+
+    def close(self) -> None:
+        import asyncio
+
+        asyncio.set_event_loop(None)
+        self.loop.close()
+
+
+class SyncHelpersTest(unittest.TestCase):
+    """Exercise ``send_message_sync`` / ``recv_message_sync`` via a patched JSPI."""
+
+    def setUp(self) -> None:
+        self._driver = _RunSyncShim()
+        self._patch = unittest.mock.patch.object(_ymq_wasm, "_run_sync_jspi", self._driver)
+        self._patch.start()
+
+    def tearDown(self) -> None:
+        self._patch.stop()
+        self._driver.close()
+
+    def test_send_message_sync_writes_frame(self) -> None:
+        socket = _make_socket()
+        _open(socket)
+        socket._handshake_complete = True  # bypass; not relevant for outbound
+
+        # First two sent items are the handshake (magic+identity); start fresh.
+        socket._ws.sent.clear()
+
+        socket.send_message_sync(Bytes(b"hello"))
+        self.assertEqual(socket._ws.sent, [_frame(b"hello")])
+
+    def test_recv_message_sync_returns_buffered_message(self) -> None:
+        socket = _make_socket()
+        _open(socket)
+        # Feed a complete inbound stream: magic, peer identity, then payload.
+        _feed(socket, _MAGIC + _frame(b"peer-identity") + _frame(b"buffered"))
+        msg = socket.recv_message_sync()
+        self.assertEqual(msg.payload.data, b"buffered")
+
+    def test_send_message_sync_propagates_shutdown_error(self) -> None:
+        socket = _make_socket()
+        _open(socket)
+        socket.shutdown()
+        with self.assertRaises(SocketStopRequestedError):
+            socket.send_message_sync(Bytes(b"x"))
+
+    def test_recv_message_sync_propagates_remote_close_error(self) -> None:
+        socket = _make_socket()
+        _open(socket)
+        # Simulate the remote closing before the handshake completes.
+        socket._on_close(None)
+        with self.assertRaises(ConnectorSocketClosedByRemoteEndError):
+            socket.recv_message_sync()
 
 
 if __name__ == "__main__":

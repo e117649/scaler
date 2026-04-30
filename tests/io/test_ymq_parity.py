@@ -203,5 +203,31 @@ class IOContextParityTest(unittest.TestCase):
         self.assertEqual(_ymq_wasm.IOContext(num_threads=4).num_threads, 4)
 
 
+class ConnectorSocketSurfaceParityTest(unittest.TestCase):
+    """Both shim and native ``ConnectorSocket`` must expose the same callable
+    surface so that downstream code (e.g. ``YMQSyncObjectStorageConnector``)
+    works against either without branching on platform.
+
+    The comparison is against the user-facing ``scaler.io.ymq.ConnectorSocket``
+    export, which on native is the ``sockets.py`` wrapper and on wasm is the
+    bare ``_ymq_wasm.ConnectorSocket``.
+    """
+
+    _REQUIRED_METHODS = ["send_message", "recv_message", "send_message_sync", "recv_message_sync", "shutdown"]
+
+    def test_required_methods_present_on_both(self) -> None:
+        from scaler.io.ymq import ConnectorSocket as PublicConnectorSocket
+        from scaler.io.ymq._ymq_wasm import ConnectorSocket as WasmConnectorSocket
+
+        for name in self._REQUIRED_METHODS:
+            with self.subTest(name=name):
+                self.assertTrue(
+                    callable(getattr(PublicConnectorSocket, name, None)), f"public ConnectorSocket missing {name!r}"
+                )
+                self.assertTrue(
+                    callable(getattr(WasmConnectorSocket, name, None)), f"wasm ConnectorSocket missing {name!r}"
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

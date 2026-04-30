@@ -119,6 +119,48 @@ def _make_exception(code: ErrorCode, message: str) -> YMQException:
 
 
 # ---------------------------------------------------------------------------
+# JSPI bridge: drive an async callback to completion from a synchronous stack.
+#
+# Only valid on Pyodide with JSPI enabled; the import is guarded at call time
+# so this module remains importable in any Python environment for unit tests.
+# Tests can monkey-patch ``_run_sync_jspi`` to drive a coroutine on a regular
+# event loop without JSPI.
+
+
+def _run_sync_jspi(coro: Any) -> Any:
+    from pyodide.ffi import run_sync  # type: ignore[import-not-found]
+
+    return run_sync(coro)
+
+
+def _drive_callback_sync(submit: Callable[[Callable[[Any], None]], None], timeout: Optional[float] = None) -> Any:
+    """Run a callback-style ymq operation to completion synchronously.
+
+    ``submit(cb)`` must invoke ``cb(result_or_exception)`` exactly once when
+    the underlying operation completes. The result is returned, or, if the
+    callback receives an exception, that exception is raised.
+    """
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    future: asyncio.Future = loop.create_future()
+
+    def _cb(result: Any) -> None:
+        if future.done():
+            return
+        if isinstance(result, BaseException):
+            future.set_exception(result)
+        else:
+            future.set_result(result)
+
+    submit(_cb)
+
+    if timeout is not None:
+        return _run_sync_jspi(asyncio.wait_for(future, timeout))
+    return _run_sync_jspi(future)
+
+
+# ---------------------------------------------------------------------------
 # Bytes / Message / Address
 
 
@@ -353,6 +395,20 @@ class ConnectorSocket:
             return
 
         self._recv_callbacks.append(callback)
+
+    def send_message_sync(self, message_payload: Bytes, /, timeout: Optional[float] = None) -> None:
+        """Block via JSPI until the message is sent.
+
+        Mirrors the native ``_ymq.ConnectorSocket.send_message_sync``. On
+        Pyodide, ``pyodide.ffi.run_sync`` suspends the current wasm stack
+        while the asyncio loop continues to drive the WebSocket events that
+        complete the underlying callback.
+        """
+        _drive_callback_sync(lambda cb: self.send_message(cb, message_payload), timeout)
+
+    def recv_message_sync(self, /, timeout: Optional[float] = None) -> Message:
+        """Block via JSPI until a message is available; mirror of native API."""
+        return _drive_callback_sync(self.recv_message, timeout)
 
     def shutdown(self) -> None:
         if self._closed:
