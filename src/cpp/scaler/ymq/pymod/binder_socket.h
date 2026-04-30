@@ -202,6 +202,43 @@ static PyObject* PyBinderSocket_send_message(PyBinderSocket* self, PyObject* arg
     Py_RETURN_NONE;
 }
 
+static PyObject* PyBinderSocket_send_multicast_message(PyBinderSocket* self, PyObject* args, PyObject* kwargs)
+{
+    auto state = YMQStateFromSelf((PyObject*)self);
+    if (!state)
+        return nullptr;
+
+    PyBytes* messagePayload    = nullptr;
+    const char* remotePrefix   = nullptr;
+    Py_ssize_t remotePrefixLen = 0;
+    const char* kwlist[]       = {"message_payload", "remote_prefix", nullptr};
+
+    if (!PyArg_ParseTupleAndKeywords(
+            args,
+            kwargs,
+            "O!|z#",
+            (char**)kwlist,
+            (PyTypeObject*)state->PyBytesType.get(),
+            &messagePayload,
+            &remotePrefix,
+            &remotePrefixLen))
+        return nullptr;
+
+    try {
+        std::optional<Identity> remotePrefixOption = std::nullopt;
+        if (remotePrefix != nullptr) {
+            remotePrefixOption = Identity {remotePrefix, static_cast<size_t>(remotePrefixLen)};
+        }
+
+        self->socket->sendMulticastMessage(std::move(messagePayload->bytes), std::move(remotePrefixOption));
+    } catch (...) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to send multicast message");
+        return nullptr;
+    }
+
+    Py_RETURN_NONE;
+}
+
 static PyObject* PyBinderSocket_recv_message(PyBinderSocket* self, PyObject* args, PyObject* kwargs)
 {
     auto state = YMQStateFromSelf((PyObject*)self);
@@ -300,6 +337,10 @@ static PyGetSetDef PyBinderSocket_properties[] = {
 static PyMethodDef PyBinderSocket_methods[] = {
     {"bind_to", (PyCFunction)(void*)PyBinderSocket_bind_to, METH_VARARGS | METH_KEYWORDS, nullptr},
     {"send_message", (PyCFunction)(void*)PyBinderSocket_send_message, METH_VARARGS | METH_KEYWORDS, nullptr},
+    {"send_multicast_message",
+     (PyCFunction)(void*)PyBinderSocket_send_multicast_message,
+     METH_VARARGS | METH_KEYWORDS,
+     nullptr},
     {"recv_message", (PyCFunction)(void*)PyBinderSocket_recv_message, METH_VARARGS | METH_KEYWORDS, nullptr},
     {"close_connection", (PyCFunction)(void*)PyBinderSocket_close_connection, METH_VARARGS | METH_KEYWORDS, nullptr},
     {"shutdown", (PyCFunction)(void*)PyBinderSocket_shutdown, METH_VARARGS | METH_KEYWORDS, nullptr},

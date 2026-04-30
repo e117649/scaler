@@ -30,6 +30,9 @@ class BinderSocket:
     ) -> None:
         call_sync(self._base.send_message, remote_identity, message_payload, timeout=timeout)
 
+    def send_multicast_message(self, message_payload: _ymq.Bytes, remote_prefix: Optional[str] = None) -> None:
+        self._base.send_multicast_message(message_payload, remote_prefix)
+
     async def recv_message(self) -> _ymq.Message:
         return await call_async(self._base.recv_message)
 
@@ -66,6 +69,25 @@ class ConnectorSocket:
             base_socket = _ymq.ConnectorSocket.connect(callback, *args, **kwargs)
 
         call_sync(create, context, identity, address, max_retry_times, init_retry_delay)
+        assert base_socket is not None
+
+        return ConnectorSocket(base_socket)
+
+    @staticmethod
+    async def async_connect(
+        context: _ymq.IOContext,
+        identity: str,
+        address: str,
+        max_retry_times: int = _ymq.DEFAULT_MAX_RETRY_TIMES,
+        init_retry_delay: int = _ymq.DEFAULT_INIT_RETRY_DELAY,
+    ) -> "ConnectorSocket":
+        base_socket: Optional[_ymq.ConnectorSocket] = None
+
+        def create(callback, *args, **kwargs):
+            nonlocal base_socket
+            base_socket = _ymq.ConnectorSocket.connect(callback, *args, **kwargs)
+
+        await call_async(create, context, identity, address, max_retry_times, init_retry_delay)
         assert base_socket is not None
 
         return ConnectorSocket(base_socket)

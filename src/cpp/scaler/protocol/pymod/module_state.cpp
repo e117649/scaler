@@ -12,13 +12,16 @@ PyObject* INITIALIZING_MODULE = nullptr;
 
 CapnpModuleState* get_module_state()
 {
-    PyObject* module = PyState_FindModule(&MODULE_DEF);
+    PyObject* module = INITIALIZING_MODULE;
+
     if (!module) {
-        module = INITIALIZING_MODULE;
+        module = PyState_FindModule(&MODULE_DEF);
     }
+
     if (!module) {
         return nullptr;
     }
+
     return get_module_state(module);
 }
 

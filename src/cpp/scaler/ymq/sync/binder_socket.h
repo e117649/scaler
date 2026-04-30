@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "scaler/error/error.h"
@@ -30,11 +31,13 @@ public:
 
     const Identity& identity() const noexcept;
 
-    std::expected<Address, Error> bindTo(std::string address);
+    std::expected<Address, Error> bindTo(std::string address) noexcept;
 
-    std::expected<void, Error> sendMessage(Identity remoteIdentity, Bytes messagePayload);
+    std::expected<void, Error> sendMessage(Identity remoteIdentity, Bytes messagePayload) noexcept;
 
-    std::expected<Message, Error> recvMessage();
+    void sendMulticastMessage(Bytes messagePayload, std::optional<Identity> remotePrefix = std::nullopt) noexcept;
+
+    std::expected<Message, Error> recvMessage() noexcept;
 
     void closeConnection(Identity remoteIdentity) noexcept;
 

@@ -16,44 +16,46 @@ const Identity& BinderSocket::identity() const noexcept
     return _socket.identity();
 }
 
-std::future<std::expected<Address, scaler::ymq::Error>> BinderSocket::bindTo(std::string address)
+std::future<std::expected<Address, Error>> BinderSocket::bindTo(std::string address)
 {
-    std::promise<std::expected<Address, scaler::ymq::Error>> promise {};
+    std::promise<std::expected<Address, Error>> promise {};
     auto future = promise.get_future();
 
-    _socket.bindTo(
-        std::move(address), [promise = std::move(promise)](std::expected<Address, scaler::ymq::Error> result) mutable {
-            promise.set_value(std::move(result));
-        });
+    _socket.bindTo(std::move(address), [promise = std::move(promise)](std::expected<Address, Error> result) mutable {
+        promise.set_value(std::move(result));
+    });
 
     return future;
 }
 
-std::future<std::expected<void, scaler::ymq::Error>> BinderSocket::sendMessage(
-    Identity remoteIdentity, scaler::ymq::Bytes messagePayload)
+std::future<std::expected<void, Error>> BinderSocket::sendMessage(Identity remoteIdentity, Bytes messagePayload)
 {
-    std::promise<std::expected<void, scaler::ymq::Error>> promise {};
+    std::promise<std::expected<void, Error>> promise {};
     auto future = promise.get_future();
 
     _socket.sendMessage(
         std::move(remoteIdentity),
         std::move(messagePayload),
-        [promise = std::move(promise)](std::expected<void, scaler::ymq::Error> result) mutable {
+        [promise = std::move(promise)](std::expected<void, Error> result) mutable {
             promise.set_value(std::move(result));
         });
 
     return future;
 }
 
-std::future<std::expected<scaler::ymq::Message, scaler::ymq::Error>> BinderSocket::recvMessage()
+void BinderSocket::sendMulticastMessage(Bytes messagePayload, std::optional<Identity> remotePrefix) noexcept
 {
-    std::promise<std::expected<scaler::ymq::Message, scaler::ymq::Error>> promise {};
+    _socket.sendMulticastMessage(std::move(messagePayload), std::move(remotePrefix));
+}
+
+std::future<std::expected<Message, Error>> BinderSocket::recvMessage()
+{
+    std::promise<std::expected<Message, Error>> promise {};
     auto future = promise.get_future();
 
-    _socket.recvMessage(
-        [promise = std::move(promise)](std::expected<scaler::ymq::Message, scaler::ymq::Error> result) mutable {
-            promise.set_value(std::move(result));
-        });
+    _socket.recvMessage([promise = std::move(promise)](std::expected<Message, Error> result) mutable {
+        promise.set_value(std::move(result));
+    });
 
     return future;
 }

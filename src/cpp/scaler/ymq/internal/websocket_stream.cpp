@@ -20,8 +20,27 @@ namespace internal {
 
 namespace {
 
-static constexpr uint64_t kMaxWebSocketPayloadSize = 64ULL * 1024 * 1024;  // 64 MB
-static constexpr size_t kMaxUpgradeHeaderSize      = 64 * 1024;            // 64 KB
+static constexpr size_t MAX_UPGRADE_HEADER_SIZE = 64 * 1024;  // 64 KB
+
+// WebSocket frame flags and masks (RFC 6455 §5.2)
+static constexpr uint8_t FLAG_FIN    = 0x80;
+static constexpr uint8_t FLAG_MASKED = 0x80;
+static constexpr uint8_t MASK_OPCODE = 0x0F;
+static constexpr uint8_t MASK_LENGTH = 0x7F;
+
+// WebSocket opcodes (RFC 6455 §5.2)
+static constexpr uint8_t OPCODE_CONTINUATION = 0x0;
+static constexpr uint8_t OPCODE_TEXT         = 0x1;
+static constexpr uint8_t OPCODE_BINARY       = 0x2;
+static constexpr uint8_t OPCODE_CLOSE        = 0x8;
+static constexpr uint8_t OPCODE_PING         = 0x9;
+static constexpr uint8_t OPCODE_PONG         = 0xA;
+
+// WebSocket payload length encoding (RFC 6455 §5.2)
+static constexpr uint8_t PAYLOAD_LEN_16BIT         = 126;
+static constexpr uint8_t PAYLOAD_LEN_64BIT         = 127;
+static constexpr size_t PAYLOAD_LEN_16BIT_MAX      = 65536;
+static constexpr uint8_t MAX_CONTROL_FRAME_PAYLOAD = 125;
 
 std::string buildClientUpgradeRequest(
     const std::string& host, uint16_t port, const std::string& path, const std::string& key) noexcept
@@ -51,21 +70,19 @@ std::string buildServerUpgradeResponse(const std::string& key) noexcept
            "\r\n";
 }
 
-// ─── WebSocket frame encoding ────────────────────────────────────────────────
-
 // Returns the frame header bytes for a server-side frame (unmasked).
 std::vector<uint8_t> buildServerFrameHeader(size_t payloadSize) noexcept
 {
     std::vector<uint8_t> header;
-    header.push_back(0x82);  // FIN | opcode=binary
-    if (payloadSize < 126) {
+    header.push_back(FLAG_FIN | OPCODE_BINARY);
+    if (payloadSize < PAYLOAD_LEN_16BIT) {
         header.push_back(static_cast<uint8_t>(payloadSize));
-    } else if (payloadSize < 65536) {
-        header.push_back(126);
+    } else if (payloadSize < PAYLOAD_LEN_16BIT_MAX) {
+        header.push_back(PAYLOAD_LEN_16BIT);
         header.push_back(static_cast<uint8_t>((payloadSize >> 8) & 0xFF));
         header.push_back(static_cast<uint8_t>(payloadSize & 0xFF));
     } else {
-        header.push_back(127);
+        header.push_back(PAYLOAD_LEN_64BIT);
         for (int i = 7; i >= 0; --i)
             header.push_back(static_cast<uint8_t>((payloadSize >> (i * 8)) & 0xFF));
     }
@@ -83,15 +100,15 @@ std::pair<std::vector<uint8_t>, std::vector<uint8_t>> buildClientFrame(
     std::memcpy(maskKey.data(), &maskInt, 4);
 
     std::vector<uint8_t> header;
-    header.push_back(0x82);  // FIN | binary
-    if (totalSize < 126) {
-        header.push_back(0x80 | static_cast<uint8_t>(totalSize));
-    } else if (totalSize < 65536) {
-        header.push_back(0x80 | 126);
+    header.push_back(FLAG_FIN | OPCODE_BINARY);
+    if (totalSize < PAYLOAD_LEN_16BIT) {
+        header.push_back(FLAG_MASKED | static_cast<uint8_t>(totalSize));
+    } else if (totalSize < PAYLOAD_LEN_16BIT_MAX) {
+        header.push_back(FLAG_MASKED | PAYLOAD_LEN_16BIT);
         header.push_back(static_cast<uint8_t>((totalSize >> 8) & 0xFF));
         header.push_back(static_cast<uint8_t>(totalSize & 0xFF));
     } else {
-        header.push_back(0x80 | 127);
+        header.push_back(FLAG_MASKED | PAYLOAD_LEN_64BIT);
         for (int i = 7; i >= 0; --i)
             header.push_back(static_cast<uint8_t>((totalSize >> (i * 8)) & 0xFF));
     }
@@ -107,7 +124,7 @@ std::pair<std::vector<uint8_t>, std::vector<uint8_t>> buildClientFrame(
     return {std::move(header), std::move(masked)};
 }
 
-// Builds a control frame (CLOSE=0x8, PING=0x9, PONG=0xA). RFC 6455 §5.5:
+// Builds a control frame (CLOSE, PING, PONG). RFC 6455 §5.5:
 // control frames are always FIN=1 and carry at most 125 bytes of payload.
 // Client frames must be masked; server frames must not.
 std::vector<uint8_t> buildControlFrame(uint8_t opcode, bool isClient, std::span<const uint8_t> payload) noexcept
@@ -118,9 +135,9 @@ std::vector<uint8_t> buildControlFrame(uint8_t opcode, bool isClient, std::span<
     const uint8_t len = static_cast<uint8_t>(payload.size());  // caller ensures ≤ 125
 
     std::vector<uint8_t> frame;
-    frame.push_back(0x80 | opcode);  // FIN=1
+    frame.push_back(FLAG_FIN | opcode);
     if (isClient) {
-        frame.push_back(0x80 | len);  // MASK=1
+        frame.push_back(FLAG_MASKED | len);
         std::array<uint8_t, 4> maskKey;
         const uint32_t maskInt = dist(rng);
         std::memcpy(maskKey.data(), &maskInt, 4);
@@ -134,8 +151,6 @@ std::vector<uint8_t> buildControlFrame(uint8_t opcode, bool isClient, std::span<
     return frame;
 }
 
-// ─── Frame decoding ──────────────────────────────────────────────────────────
-
 struct DecodedFrame {
     uint8_t opcode;
     bool fin;
@@ -143,7 +158,7 @@ struct DecodedFrame {
 };
 
 // Tries to parse one complete WebSocket frame from buffer, consuming it in-place.
-//   unexpected(error) — protocol error (payload exceeds kMaxWebSocketPayloadSize)
+//   unexpected(error) — protocol error
 //   {nullopt}         — buffer does not yet contain a full frame
 //   {DecodedFrame}    — one frame decoded and consumed
 std::expected<std::optional<DecodedFrame>, scaler::wrapper::uv::Error> tryDecodeFrame(
@@ -154,18 +169,18 @@ std::expected<std::optional<DecodedFrame>, scaler::wrapper::uv::Error> tryDecode
 
     const uint8_t byte0  = buffer[0];
     const uint8_t byte1  = buffer[1];
-    const bool fin       = (byte0 & 0x80) != 0;
-    const uint8_t opcode = byte0 & 0x0F;
-    const bool masked    = (byte1 & 0x80) != 0;
-    uint64_t payloadLen  = byte1 & 0x7F;
+    const bool fin       = (byte0 & FLAG_FIN) != 0;
+    const uint8_t opcode = byte0 & MASK_OPCODE;
+    const bool masked    = (byte1 & FLAG_MASKED) != 0;
+    uint64_t payloadLen  = byte1 & MASK_LENGTH;
     size_t headerSize    = 2;
 
-    if (payloadLen == 126) {
+    if (payloadLen == PAYLOAD_LEN_16BIT) {
         if (buffer.size() < 4)
             return std::optional<DecodedFrame> {std::nullopt};
         payloadLen = (uint64_t(buffer[2]) << 8) | buffer[3];
         headerSize = 4;
-    } else if (payloadLen == 127) {
+    } else if (payloadLen == PAYLOAD_LEN_64BIT) {
         if (buffer.size() < 10)
             return std::optional<DecodedFrame> {std::nullopt};
         payloadLen = 0;
@@ -173,9 +188,6 @@ std::expected<std::optional<DecodedFrame>, scaler::wrapper::uv::Error> tryDecode
             payloadLen = (payloadLen << 8) | buffer[2 + i];
         headerSize = 10;
     }
-
-    if (payloadLen > kMaxWebSocketPayloadSize)
-        return std::unexpected(scaler::wrapper::uv::Error {UV_EPROTO});
 
     if (masked)
         headerSize += 4;
@@ -202,8 +214,6 @@ std::expected<std::optional<DecodedFrame>, scaler::wrapper::uv::Error> tryDecode
 
 }  // anonymous namespace
 
-// ─── Upgrade state ───────────────────────────────────────────────────────────
-
 // Shared state used during the async HTTP upgrade phase on the client side.
 // TCPSocket has no public default constructor, so we wrap it in optional.
 struct ClientUpgradeContext {
@@ -219,8 +229,6 @@ struct ServerUpgradeContext {
     std::vector<uint8_t> recvBuffer {};
     scaler::utility::MoveOnlyFunction<void(std::expected<WebSocketStream, scaler::wrapper::uv::Error>)> callback {};
 };
-
-// ─── WebSocketStream implementation ─────────────────────────────────────────
 
 WebSocketStream::State::State(scaler::wrapper::uv::TCPSocket socket, bool isServer) noexcept
     : _socket(std::move(socket)), _isServer(isServer)
@@ -259,8 +267,9 @@ static void finishClientUpgrade(std::shared_ptr<ClientUpgradeContext> ctx) noexc
         return;
     }
 
-    const auto acceptHeader = extractHeader(headers, "Sec-WebSocket-Accept");
-    if (!acceptHeader.has_value() || *acceptHeader != computeWebSocketAccept(ctx->key)) {
+    const auto headerMap = extractHeaders(headers);
+    const auto acceptIt  = headerMap.find("sec-websocket-accept");
+    if (acceptIt == headerMap.end() || acceptIt->second != computeWebSocketAccept(ctx->key)) {
         ctx->callback(std::unexpected(scaler::wrapper::uv::Error {UV_EPROTO}));
         return;
     }
@@ -300,41 +309,36 @@ static void finishServerUpgrade(std::shared_ptr<ServerUpgradeContext> ctx) noexc
         return;
     }
 
-    const auto upgradeHeader    = extractHeader(headers, "Upgrade");
-    const auto keyHeader        = extractHeader(headers, "Sec-WebSocket-Key");
-    const auto connectionHeader = extractHeader(headers, "Connection");
-    const auto versionHeader    = extractHeader(headers, "Sec-WebSocket-Version");
+    const auto headerMap    = extractHeaders(headers);
+    const auto upgradeIt    = headerMap.find("upgrade");
+    const auto keyIt        = headerMap.find("sec-websocket-key");
+    const auto connectionIt = headerMap.find("connection");
+    const auto versionIt    = headerMap.find("sec-websocket-version");
 
-    if (!upgradeHeader.has_value() || !keyHeader.has_value() || !connectionHeader.has_value() ||
-        !versionHeader.has_value()) {
+    if (upgradeIt == headerMap.end() || keyIt == headerMap.end() || connectionIt == headerMap.end() ||
+        versionIt == headerMap.end()) {
         ctx->callback(std::unexpected(scaler::wrapper::uv::Error {UV_EPROTO}));
         return;
     }
 
     // Verify Upgrade: websocket (case-insensitive)
-    std::string upgradeValue = *upgradeHeader;
-    for (char& c: upgradeValue)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (upgradeValue != "websocket") {
+    if (toLower(upgradeIt->second) != "websocket") {
         ctx->callback(std::unexpected(scaler::wrapper::uv::Error {UV_EPROTO}));
         return;
     }
 
     // Verify Connection header contains "upgrade" (case-insensitive, may be a token list)
-    std::string connectionValue = *connectionHeader;
-    for (char& c: connectionValue)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (connectionValue.find("upgrade") == std::string::npos) {
+    if (toLower(connectionIt->second).find("upgrade") == std::string::npos) {
         ctx->callback(std::unexpected(scaler::wrapper::uv::Error {UV_EPROTO}));
         return;
     }
 
-    if (*versionHeader != "13") {
+    if (versionIt->second != "13") {
         ctx->callback(std::unexpected(scaler::wrapper::uv::Error {UV_EPROTO}));
         return;
     }
 
-    const std::string response = buildServerUpgradeResponse(*keyHeader);
+    const std::string response = buildServerUpgradeResponse(keyIt->second);
     auto responseData          = std::make_shared<std::string>(response);
     const std::span<const uint8_t> responseSpan(
         reinterpret_cast<const uint8_t*>(responseData->data()), responseData->size());
@@ -367,13 +371,13 @@ void WebSocketStream::upgradeAsClient(
     ctx->key      = generateWebSocketKey();
     ctx->callback = std::move(callback);
 
-    const std::string request = buildClientUpgradeRequest(address.host, address.port, address.path, ctx->key);
-    auto requestData          = std::make_shared<std::string>(request);
+    auto requestData =
+        std::make_shared<std::string>(buildClientUpgradeRequest(address.host, address.port, address.path, ctx->key));
     const std::span<const uint8_t> requestSpan(
         reinterpret_cast<const uint8_t*>(requestData->data()), requestData->size());
 
     auto writeResult = ctx->socket->write(
-        std::span<const std::span<const uint8_t>>(&requestSpan, 1),
+        requestSpan,
         [ctx, requestData = std::move(requestData)](std::expected<void, scaler::wrapper::uv::Error> result) mutable {
             if (!result.has_value()) {
                 ctx->callback(std::unexpected(result.error()));
@@ -383,17 +387,19 @@ void WebSocketStream::upgradeAsClient(
             auto readStartResult = ctx->socket->readStart(
                 [ctx](std::expected<std::span<const uint8_t>, scaler::wrapper::uv::Error> readResult) mutable {
                     if (!readResult.has_value()) {
+                        auto safeCtx = ctx;
                         ctx->socket->readStop();
-                        ctx->callback(std::unexpected(readResult.error()));
+                        safeCtx->callback(std::unexpected(readResult.error()));
                         return;
                     }
 
                     const auto& data = readResult.value();
                     ctx->recvBuffer.insert(ctx->recvBuffer.end(), data.begin(), data.end());
 
-                    if (ctx->recvBuffer.size() > kMaxUpgradeHeaderSize) {
+                    if (ctx->recvBuffer.size() > MAX_UPGRADE_HEADER_SIZE) {
+                        auto safeCtx = ctx;
                         ctx->socket->readStop();
-                        ctx->callback(std::unexpected(scaler::wrapper::uv::Error {UV_EPROTO}));
+                        safeCtx->callback(std::unexpected(scaler::wrapper::uv::Error {UV_EPROTO}));
                         return;
                     }
 
@@ -438,7 +444,7 @@ void WebSocketStream::upgradeAsServer(
             const auto& data = readResult.value();
             ctx->recvBuffer.insert(ctx->recvBuffer.end(), data.begin(), data.end());
 
-            if (ctx->recvBuffer.size() > kMaxUpgradeHeaderSize) {
+            if (ctx->recvBuffer.size() > MAX_UPGRADE_HEADER_SIZE) {
                 auto safeCtx = ctx;
                 ctx->socket->readStop();
                 safeCtx->callback(std::unexpected(scaler::wrapper::uv::Error {UV_EPROTO}));
@@ -456,8 +462,6 @@ void WebSocketStream::upgradeAsServer(
         cb(std::unexpected(readStartResult.error()));
     }
 }
-
-// ─── Data path ───────────────────────────────────────────────────────────────
 
 std::expected<void, scaler::wrapper::uv::Error> WebSocketStream::write(
     std::span<const std::span<const uint8_t>> buffers, scaler::wrapper::uv::WriteCallback callback) noexcept
@@ -504,6 +508,90 @@ std::expected<void, scaler::wrapper::uv::Error> WebSocketStream::write(
     return {};
 }
 
+void WebSocketStream::onRead(
+    std::shared_ptr<State> state, std::expected<std::span<const uint8_t>, scaler::wrapper::uv::Error> result) noexcept
+{
+    if (!result.has_value()) {
+        if (state->_readActive && state->_readCallback) {
+            state->_readCallback(std::unexpected(result.error()));
+        }
+        return;
+    }
+
+    const auto& data = result.value();
+    state->_recvBuffer.insert(state->_recvBuffer.end(), data.begin(), data.end());
+
+    while (state->_readActive && !state->_recvBuffer.empty()) {
+        auto frameResult = tryDecodeFrame(state->_recvBuffer);
+        if (!frameResult.has_value()) {
+            state->_readCallback(std::unexpected(frameResult.error()));
+            return;
+        }
+        if (!frameResult->has_value())
+            break;  // need more data
+
+        auto& frame = frameResult->value();
+
+        if (frame.opcode == OPCODE_CLOSE) {
+            // CLOSE: echo a CLOSE frame then signal clean disconnect.
+            auto closeFrame = buildControlFrame(OPCODE_CLOSE, !state->_isServer, {});
+            auto frameData  = std::make_shared<std::vector<uint8_t>>(std::move(closeFrame));
+            const std::span<const uint8_t> frameSpan(*frameData);
+            // Best-effort CLOSE echo — connection is shutting down regardless.
+            if (auto r = state->_socket.write(
+                    std::span<const std::span<const uint8_t>>(&frameSpan, 1),
+                    [frameData = std::move(frameData)](std::expected<void, scaler::wrapper::uv::Error>) {});
+                !r.has_value()) {
+            }
+            if (state->_readActive && state->_readCallback)
+                state->_readCallback(std::unexpected(scaler::wrapper::uv::Error {UV_EOF}));
+            return;
+        }
+
+        if (frame.opcode == OPCODE_PING) {
+            // PING: respond with PONG carrying the same payload (RFC 6455 §5.5.3).
+            auto pongPayload = frame.payload;
+            if (pongPayload.size() > MAX_CONTROL_FRAME_PAYLOAD)
+                pongPayload.resize(MAX_CONTROL_FRAME_PAYLOAD);
+            auto pongFrame = buildControlFrame(OPCODE_PONG, !state->_isServer, pongPayload);
+            auto frameData = std::make_shared<std::vector<uint8_t>>(std::move(pongFrame));
+            const std::span<const uint8_t> frameSpan(*frameData);
+            // Best-effort PONG — if this write fails the next read will catch the error.
+            if (auto r = state->_socket.write(
+                    std::span<const std::span<const uint8_t>>(&frameSpan, 1),
+                    [frameData = std::move(frameData)](std::expected<void, scaler::wrapper::uv::Error>) {});
+                !r.has_value()) {
+            }
+            continue;
+        }
+
+        if (frame.opcode == OPCODE_PONG) {
+            // PONG: unsolicited or in response to our PING — ignore.
+            continue;
+        }
+
+        // Data frames: handle fragmentation per RFC 6455 §5.4.
+        if (frame.opcode == OPCODE_TEXT || frame.opcode == OPCODE_BINARY) {
+            if (frame.fin) {
+                // Complete single-frame message.
+                state->_readCallback(std::span<const uint8_t>(frame.payload));
+            } else {
+                // First fragment — start accumulating.
+                state->_fragmentBuffer = std::move(frame.payload);
+            }
+        } else if (frame.opcode == OPCODE_CONTINUATION) {
+            // Continuation frame.
+            state->_fragmentBuffer.insert(state->_fragmentBuffer.end(), frame.payload.begin(), frame.payload.end());
+            if (frame.fin) {
+                // Final fragment — deliver assembled message.
+                state->_readCallback(std::span<const uint8_t>(state->_fragmentBuffer));
+                state->_fragmentBuffer.clear();
+            }
+        }
+        // Reserved opcodes are silently ignored.
+    }
+}
+
 std::expected<void, scaler::wrapper::uv::Error> WebSocketStream::readStart(
     scaler::wrapper::uv::ReadCallback callback) noexcept
 {
@@ -513,86 +601,7 @@ std::expected<void, scaler::wrapper::uv::Error> WebSocketStream::readStart(
 
     return state->_socket.readStart(
         [state](std::expected<std::span<const uint8_t>, scaler::wrapper::uv::Error> result) mutable {
-            if (!result.has_value()) {
-                if (state->_readActive && state->_readCallback) {
-                    state->_readCallback(std::unexpected(result.error()));
-                }
-                return;
-            }
-
-            const auto& data = result.value();
-            state->_recvBuffer.insert(state->_recvBuffer.end(), data.begin(), data.end());
-
-            while (state->_readActive && !state->_recvBuffer.empty()) {
-                auto frameResult = tryDecodeFrame(state->_recvBuffer);
-                if (!frameResult.has_value()) {
-                    state->_readCallback(std::unexpected(frameResult.error()));
-                    return;
-                }
-                if (!frameResult->has_value())
-                    break;  // need more data
-
-                auto& frame = frameResult->value();
-
-                if (frame.opcode == 0x8) {
-                    // CLOSE: echo a CLOSE frame then signal clean disconnect.
-                    auto closeFrame = buildControlFrame(0x8, !state->_isServer, {});
-                    auto frameData  = std::make_shared<std::vector<uint8_t>>(std::move(closeFrame));
-                    const std::span<const uint8_t> frameSpan(*frameData);
-                    // Best-effort CLOSE echo — connection is shutting down regardless.
-                    if (auto r = state->_socket.write(
-                            std::span<const std::span<const uint8_t>>(&frameSpan, 1),
-                            [frameData = std::move(frameData)](std::expected<void, scaler::wrapper::uv::Error>) {});
-                        !r.has_value()) {
-                    }
-                    if (state->_readActive && state->_readCallback)
-                        state->_readCallback(std::unexpected(scaler::wrapper::uv::Error {UV_EOF}));
-                    return;
-                }
-
-                if (frame.opcode == 0x9) {
-                    // PING: respond with PONG carrying the same payload (RFC 6455 §5.5.3).
-                    auto pongPayload = frame.payload;
-                    if (pongPayload.size() > 125)
-                        pongPayload.resize(125);
-                    auto pongFrame = buildControlFrame(0xA, !state->_isServer, pongPayload);
-                    auto frameData = std::make_shared<std::vector<uint8_t>>(std::move(pongFrame));
-                    const std::span<const uint8_t> frameSpan(*frameData);
-                    // Best-effort PONG — if this write fails the next read will catch the error.
-                    if (auto r = state->_socket.write(
-                            std::span<const std::span<const uint8_t>>(&frameSpan, 1),
-                            [frameData = std::move(frameData)](std::expected<void, scaler::wrapper::uv::Error>) {});
-                        !r.has_value()) {
-                    }
-                    continue;
-                }
-
-                if (frame.opcode == 0xA) {
-                    // PONG: unsolicited or in response to our PING — ignore.
-                    continue;
-                }
-
-                // Data frames: handle fragmentation per RFC 6455 §5.4.
-                if (frame.opcode == 0x1 || frame.opcode == 0x2) {
-                    if (frame.fin) {
-                        // Complete single-frame message.
-                        state->_readCallback(std::span<const uint8_t>(frame.payload));
-                    } else {
-                        // First fragment — start accumulating.
-                        state->_fragmentBuffer = std::move(frame.payload);
-                    }
-                } else if (frame.opcode == 0x0) {
-                    // Continuation frame.
-                    state->_fragmentBuffer.insert(
-                        state->_fragmentBuffer.end(), frame.payload.begin(), frame.payload.end());
-                    if (frame.fin) {
-                        // Final fragment — deliver assembled message.
-                        state->_readCallback(std::span<const uint8_t>(state->_fragmentBuffer));
-                        state->_fragmentBuffer.clear();
-                    }
-                }
-                // Reserved opcodes are silently ignored.
-            }
+            onRead(state, std::move(result));
         });
 }
 
@@ -606,20 +615,48 @@ void WebSocketStream::readStop() noexcept
 std::expected<void, scaler::wrapper::uv::Error> WebSocketStream::shutdown(
     scaler::wrapper::uv::ShutdownCallback callback) noexcept
 {
-    auto closeFrame = buildControlFrame(0x8, !_state->_isServer, {});
+    auto closeFrame = buildControlFrame(OPCODE_CLOSE, !_state->_isServer, {});
     auto frameData  = std::make_shared<std::vector<uint8_t>>(std::move(closeFrame));
     const std::span<const uint8_t> frameSpan(*frameData);
     auto state = _state;
 
+    // Share ownership so both the synchronous error path and the async write callback can invoke it.
+    auto callbackPtr = std::make_shared<scaler::wrapper::uv::ShutdownCallback>(std::move(callback));
+
     auto result = _state->_socket.write(
-        std::span<const std::span<const uint8_t>>(&frameSpan, 1),
-        [state, frameData = std::move(frameData), callback = std::move(callback)](
-            std::expected<void, scaler::wrapper::uv::Error>) mutable {
-            UV_EXIT_ON_ERROR(state->_socket.shutdown(std::move(callback)));
+        frameSpan,
+        [state, frameData = std::move(frameData), callbackPtr](
+            std::expected<void, scaler::wrapper::uv::Error> writeErr) mutable {
+            if (!writeErr.has_value()) {
+                // CLOSE frame failed (connection already gone) — treat as successful shutdown.
+                (*callbackPtr)({});
+                return;
+            }
+            // UV_ENOTCONN from the TCP shutdown callback means the peer already closed the
+            // connection after we sent the CLOSE frame — treat as successful shutdown.
+            auto r = state->_socket.shutdown(
+                [callbackPtr](std::expected<void, scaler::wrapper::uv::Error> shutdownErr) mutable {
+                    if (!shutdownErr.has_value() && shutdownErr.error().code() == UV_ENOTCONN)
+                        (*callbackPtr)({});
+                    else
+                        (*callbackPtr)(shutdownErr);
+                });
+            if (!r.has_value()) {
+                if (r.error().code() == UV_ENOTCONN)
+                    (*callbackPtr)({});
+                else
+                    UV_EXIT_ON_ERROR(r);
+            }
         });
 
-    if (!result.has_value())
+    if (!result.has_value()) {
+        if (result.error().code() == UV_ENOTCONN) {
+            // Socket already disconnected — no CLOSE frame needed.
+            (*callbackPtr)({});
+            return {};
+        }
         return std::unexpected(result.error());
+    }
     return {};
 }
 

@@ -99,6 +99,24 @@ void BinderSocket::sendMessage(
     });
 }
 
+void BinderSocket::sendMulticastMessage(Bytes messagePayload, std::optional<Identity> remotePrefix) noexcept
+{
+    _state->_thread.executeThreadSafe(
+        [state = _state, messagePayload = std::move(messagePayload), remotePrefix = std::move(remotePrefix)]() mutable {
+            for (const auto& [_, connectionPtr]: state->_connections) {
+                if (remotePrefix.has_value()) {
+                    const std::optional<Identity>& remoteIdentity = connectionPtr->remoteIdentity();
+                    if (!remoteIdentity.has_value() || !remoteIdentity->starts_with(remotePrefix.value())) {
+                        continue;
+                    }
+                }
+
+                connectionPtr->sendMessage(
+                    messagePayload, []([[maybe_unused]] std::expected<void, Error> result) noexcept {});
+            }
+        });
+}
+
 void BinderSocket::recvMessage(RecvMessageCallback onRecvMessage) noexcept
 {
     _state->_thread.executeThreadSafe([state = _state, onRecvMessage = std::move(onRecvMessage)]() mutable {

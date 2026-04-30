@@ -116,16 +116,16 @@ void ConnectorSocket::sendMessage(Bytes messagePayload, SendMessageCallback onMe
 void ConnectorSocket::recvMessage(RecvMessageCallback onRecvMessage) noexcept
 {
     _state->_thread.executeThreadSafe([state = _state, onRecvMessage = std::move(onRecvMessage)]() mutable {
-        if (state->_disconnected) {
-            onRecvMessage(std::unexpected {Error::ErrorCode::ConnectorSocketClosedByRemoteEnd});
-            return;
-        }
-
         if (!state->_pendingRecvMessages.empty()) {
             // There is a message ready, call the callback immediately
             Message message = std::move(state->_pendingRecvMessages.front());
             state->_pendingRecvMessages.pop();
             onRecvMessage(std::move(message));
+            return;
+        }
+
+        if (state->_disconnected) {
+            onRecvMessage(std::unexpected {Error::ErrorCode::ConnectorSocketClosedByRemoteEnd});
             return;
         }
 

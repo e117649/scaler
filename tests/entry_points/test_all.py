@@ -123,8 +123,9 @@ class TestScalerMain(unittest.TestCase):
     def test_no_sections_exits_with_code_1(self) -> None:
         from scaler.entry_points.scaler import main
 
-        with patch("scaler.config.config_class._load_toml", return_value={}), patch(
-            "sys.argv", ["scaler", "test.toml"]
+        with (
+            patch("scaler.config.config_class._load_toml", return_value={}),
+            patch("sys.argv", ["scaler", "test.toml"]),
         ):
             with self.assertRaises(SystemExit) as ctx:
                 main()
@@ -142,8 +143,9 @@ class TestScalerAllConfigShape(unittest.TestCase):
     def _parse(self, toml_data):
         from scaler.entry_points.scaler import ScalerAllConfig
 
-        with patch("scaler.config.config_class._load_toml", return_value=toml_data), patch(
-            "sys.argv", ["scaler", "test.toml"]
+        with (
+            patch("scaler.config.config_class._load_toml", return_value=toml_data),
+            patch("sys.argv", ["scaler", "test.toml"]),
         ):
             return ScalerAllConfig.parse("scaler", "all", disable_config_flag=True)
 
@@ -240,6 +242,7 @@ class TestScalerAllConfigShape(unittest.TestCase):
                 "scheduler_address": "tcp://127.0.0.1:6378",
                 "worker_manager_id": "wm-orb",
                 "image_id": "ami-0528819f94f4f5fa5",
+                "aws_region": "us-east-1",
             }
         }
         config = self._parse(toml)
@@ -274,6 +277,7 @@ class TestScalerAllConfigShape(unittest.TestCase):
                     "scheduler_address": "tcp://127.0.0.1:6378",
                     "worker_manager_id": "wm-orb",
                     "image_id": "ami-0528819f94f4f5fa5",
+                    "aws_region": "us-east-1",
                 },
             ]
         }
@@ -307,9 +311,11 @@ class TestRunWorkerManager(unittest.TestCase):
 
         config = self._make_native_config(event_loop="builtin")
 
-        with patch("scaler.entry_points.scaler.register_event_loop") as mock_reg, patch(
-            "scaler.entry_points.scaler.setup_logger"
-        ), patch("scaler.worker_manager_adapter.baremetal.native.NativeWorkerManager") as mock_nm:
+        with (
+            patch("scaler.entry_points.scaler.register_event_loop") as mock_reg,
+            patch("scaler.entry_points.scaler.setup_logger"),
+            patch("scaler.worker_manager_adapter.baremetal.native.NativeWorkerManager") as mock_nm,
+        ):
             mock_nm.return_value.run.return_value = None
             _run_worker_manager(config)
 
@@ -320,9 +326,11 @@ class TestRunWorkerManager(unittest.TestCase):
 
         config = self._make_native_config(logging_level="WARNING")
 
-        with patch("scaler.entry_points.scaler.setup_logger") as mock_log, patch(
-            "scaler.entry_points.scaler.register_event_loop"
-        ), patch("scaler.worker_manager_adapter.baremetal.native.NativeWorkerManager") as mock_nm:
+        with (
+            patch("scaler.entry_points.scaler.setup_logger") as mock_log,
+            patch("scaler.entry_points.scaler.register_event_loop"),
+            patch("scaler.worker_manager_adapter.baremetal.native.NativeWorkerManager") as mock_nm,
+        ):
             mock_nm.return_value.run.return_value = None
             _run_worker_manager(config)
 
@@ -341,6 +349,7 @@ class TestRunWorkerManager(unittest.TestCase):
         return ORBAWSEC2WorkerAdapterConfig(
             worker_manager_config=wmc,
             image_id="ami-0528819f94f4f5fa5",
+            aws_region="us-east-1",
             worker_config=WorkerConfig(event_loop=event_loop),
             logging_config=LoggingConfig(level=logging_level),
         )
@@ -350,9 +359,11 @@ class TestRunWorkerManager(unittest.TestCase):
 
         config = self._make_orb_aws_ec2_config()
 
-        with patch("scaler.entry_points.scaler.setup_logger"), patch(
-            "scaler.entry_points.scaler.register_event_loop"
-        ), patch("scaler.worker_manager_adapter.orb_aws_ec2.worker_manager.ORBAWSEC2WorkerAdapter") as mock_orb:
+        with (
+            patch("scaler.entry_points.scaler.setup_logger"),
+            patch("scaler.entry_points.scaler.register_event_loop"),
+            patch("scaler.worker_manager_adapter.orb_aws_ec2.worker_manager.ORBAWSEC2WorkerAdapter") as mock_orb,
+        ):
             mock_orb.return_value.run.return_value = None
             _run_worker_manager(config)
 
@@ -364,9 +375,11 @@ class TestRunWorkerManager(unittest.TestCase):
 
         config = self._make_orb_aws_ec2_config(event_loop="builtin")
 
-        with patch("scaler.entry_points.scaler.register_event_loop") as mock_reg, patch(
-            "scaler.entry_points.scaler.setup_logger"
-        ), patch("scaler.worker_manager_adapter.orb_aws_ec2.worker_manager.ORBAWSEC2WorkerAdapter") as mock_orb:
+        with (
+            patch("scaler.entry_points.scaler.register_event_loop") as mock_reg,
+            patch("scaler.entry_points.scaler.setup_logger"),
+            patch("scaler.worker_manager_adapter.orb_aws_ec2.worker_manager.ORBAWSEC2WorkerAdapter") as mock_orb,
+        ):
             mock_orb.return_value.run.return_value = None
             _run_worker_manager(config)
 

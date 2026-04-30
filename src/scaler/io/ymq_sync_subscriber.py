@@ -3,18 +3,17 @@ import threading
 from datetime import timedelta
 from typing import Callable, Optional
 
-import zmq
-
 from scaler.config.types.address import AddressConfig
 from scaler.io.mixins import SyncSubscriber
 from scaler.io.utility import deserialize
+from scaler.io.ymq import ConnectorSocket, IOContext
 from scaler.protocol.capnp import BaseMessage
 
 
-class ZMQSyncSubscriber(SyncSubscriber):
+class YMQSyncSubscriber(SyncSubscriber):
     def __init__(
         self,
-        context: zmq.Context,
+        context: IOContext,
         identity: bytes,
         address: AddressConfig,
         callback: Callable[[BaseMessage], None],
@@ -24,16 +23,16 @@ class ZMQSyncSubscriber(SyncSubscriber):
 
         self._stop_event = threading.Event()
 
-        self._context: zmq.Context = context
+        self._context = context
         self._identity = identity
         self._address = address
         self._callback = callback
         self._timeout = timeout
 
-        self.__initialize()
+        self._socket = ConnectorSocket.connect(self._context, self._identity.decode(), repr(self._address))
 
     def __close(self):
-        self._socket.close()
+        self._socket.shutdown()
 
     def __stop_polling(self):
         self._stop_event.set()
@@ -47,30 +46,23 @@ class ZMQSyncSubscriber(SyncSubscriber):
 
         self.__close()
 
-    def __initialize(self):
-        self._socket = self._context.socket(zmq.SUB)
-        self._socket.setsockopt(zmq.RCVHWM, 0)
-
-        if self._timeout is None:
-            self._socket.setsockopt(zmq.RCVTIMEO, -1)
-        else:
-            timeout_milliseconds = int(self._timeout.total_seconds() * 1000)
-            self._socket.setsockopt(zmq.RCVTIMEO, timeout_milliseconds)
-
-        self._socket.subscribe(self._identity)
-        self._socket.connect(repr(self._address))
-
     def __routine_polling(self):
+        timeout_seconds = self._timeout.total_seconds() if self._timeout is not None else None
+
         try:
-            self.__routine_receive(self._socket.recv(copy=False).bytes)
-        except zmq.Again:
-            assert self._timeout is not None
-            raise TimeoutError(f"Cannot connect to {self._address!r} in {self._timeout.total_seconds()} seconds")
+            message = self._socket.recv_message_sync(timeout=timeout_seconds)
+            payload_data = message.payload.data
+            if payload_data is None:
+                return
+
+            self.__routine_receive(payload_data)
+        except TimeoutError:
+            raise TimeoutError(f"Cannot connect to {self._address!r} in {timeout_seconds} seconds")
 
     def __routine_receive(self, payload: bytes):
         result: Optional[BaseMessage] = deserialize(payload)
         if result is None:
             logging.error(f"received unknown message: {payload!r}")
-            return None
+            return
 
         self._callback(result)

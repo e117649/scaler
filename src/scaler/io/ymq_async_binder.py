@@ -65,7 +65,12 @@ class YMQAsyncBinder(AsyncBinder):
         await self._socket.send_message(to.decode(), Bytes(serialize(message)))
 
     def get_status(self) -> BinderStatus:
-        return BinderStatus(received=self._received, sent=self._sent)
+        return BinderStatus(
+            received=[
+                BinderStatus.Pair(client=message_type, number=count) for message_type, count in self._received.items()
+            ],
+            sent=[BinderStatus.Pair(client=message_type, number=count) for message_type, count in self._sent.items()],
+        )
 
     def __count_received(self, message_type: str):
         self._received[message_type] += 1

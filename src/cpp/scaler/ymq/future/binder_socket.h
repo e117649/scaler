@@ -3,6 +3,7 @@
 #include <expected>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "scaler/error/error.h"
@@ -31,12 +32,13 @@ public:
 
     const Identity& identity() const noexcept;
 
-    std::future<std::expected<Address, scaler::ymq::Error>> bindTo(std::string address);
+    std::future<std::expected<Address, Error>> bindTo(std::string address);
 
-    std::future<std::expected<void, scaler::ymq::Error>> sendMessage(
-        Identity remoteIdentity, scaler::ymq::Bytes messagePayload);
+    std::future<std::expected<void, Error>> sendMessage(Identity remoteIdentity, Bytes messagePayload);
 
-    std::future<std::expected<scaler::ymq::Message, scaler::ymq::Error>> recvMessage();
+    void sendMulticastMessage(Bytes messagePayload, std::optional<Identity> remotePrefix = std::nullopt) noexcept;
+
+    std::future<std::expected<Message, Error>> recvMessage();
 
     void closeConnection(Identity remoteIdentity) noexcept;
 

@@ -49,6 +49,25 @@ Install AWS CLI v2:
          unzip awscliv2.zip
          sudo ./aws/install
 
+   .. group-tab:: macOS
+
+      .. code-block:: bash
+
+         curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
+         sudo installer -pkg AWSCLIV2.pkg -target /
+
+         aws --version
+
+   .. group-tab:: Windows
+
+      Requires admin rights. Run in an elevated Command Prompt or PowerShell:
+
+      .. code-block:: powershell
+
+         msiexec.exe /i https://awscli.amazonaws.com/AWSCLIV2.msi
+
+         aws --version
+
 Then authenticate with AWS CLI:
 
 .. code-block:: bash
@@ -176,7 +195,7 @@ Then, on the **EC2 instance**, install uv and Scaler:
    source $HOME/.local/bin/env
 
    # Create and activate a virtual environment and install Scaler
-   uv venv
+   uv venv --python 3.14
    source .venv/bin/activate
    uv pip install 'opengris-scaler[all]'
 
@@ -208,8 +227,14 @@ Example output:
 Step 4 — Start Services
 ------------------------
 
-Create a ``config.toml`` on the **EC2 instance**. Replace ``<EC2_PUBLIC_IP>`` and
-``<EC2_PRIVATE_IP>`` with the values printed in Step 2.
+Create a ``config.toml`` on the **EC2 instance**, filling in the placeholders:
+
+*   Replace ``<EC2_PUBLIC_IP>`` and ``<EC2_PRIVATE_IP>`` with the values printed
+    in Step 2.
+*   Replace ``<REGION>`` with the AWS region of this EC2 instance (e.g.
+    ``us-east-1``). This is required and controls where ORB launches worker
+    instances; set it to match the scheduler's region to avoid cross-region
+    launches.
 
 The scheduler's ``advertised_object_storage_address`` is forwarded to connecting
 clients, so it must be set to the EC2 **public** IP. The ``object_storage_address``
@@ -248,7 +273,8 @@ network.
          numpy
          """
          instance_type = "t3.medium"
-         aws_region = "us-east-1"
+         # update to match the region where this EC2 instance is running
+         aws_region = "<REGION>"
          logging_level = "INFO"
 
       Run command:
@@ -275,12 +301,12 @@ network.
              --advertised-object-storage-address tcp://<EC2_PUBLIC_IP>:6789 &
          scaler_worker_manager orb_aws_ec2 tcp://127.0.0.1:6788 \
              --worker-manager-id wm-orb \
-             --public-scheduler-address tcp://<EC2_PRIVATE_IP>:6788 \
+             --worker-scheduler-address tcp://<EC2_PRIVATE_IP>:6788 \
              --object-storage-address tcp://<EC2_PRIVATE_IP>:6789 \
              --python-version 3.14 \
              --requirements-txt $'opengris-scaler>=1.27.0\nnumpy' \
              --instance-type t3.medium \
-             --aws-region us-east-1 \
+             --aws-region <REGION> \
              --logging-level INFO
 
 Step 5 — Connect a Client

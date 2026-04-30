@@ -15,17 +15,22 @@ const Identity& BinderSocket::identity() const noexcept
     return _socket.identity();
 }
 
-std::expected<Address, Error> BinderSocket::bindTo(std::string address)
+std::expected<Address, Error> BinderSocket::bindTo(std::string address) noexcept
 {
     return _socket.bindTo(std::move(address)).get();
 }
 
-std::expected<void, Error> BinderSocket::sendMessage(Identity remoteIdentity, Bytes messagePayload)
+std::expected<void, Error> BinderSocket::sendMessage(Identity remoteIdentity, Bytes messagePayload) noexcept
 {
     return _socket.sendMessage(std::move(remoteIdentity), std::move(messagePayload)).get();
 }
 
-std::expected<Message, Error> BinderSocket::recvMessage()
+void BinderSocket::sendMulticastMessage(Bytes messagePayload, std::optional<Identity> remotePrefix) noexcept
+{
+    _socket.sendMulticastMessage(std::move(messagePayload), std::move(remotePrefix));
+}
+
+std::expected<Message, Error> BinderSocket::recvMessage() noexcept
 {
     return _socket.recvMessage().get();
 }

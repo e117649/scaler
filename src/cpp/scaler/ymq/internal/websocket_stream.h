@@ -77,6 +77,10 @@ private:
 
     explicit WebSocketStream(std::shared_ptr<State> state) noexcept;
 
+    static void onRead(
+        std::shared_ptr<State> state,
+        std::expected<std::span<const uint8_t>, scaler::wrapper::uv::Error> result) noexcept;
+
     std::shared_ptr<State> _state;
 };
 

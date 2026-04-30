@@ -298,7 +298,7 @@ AWS Raw ECS Parameters
 * ``--ecs-task-memory``: Memory per Fargate task in GB (default: ``30``).
 * ``--ecs-python-requirements``: Python packages to install in the container at startup (default: ``tomli;pargraph;parfun;pandas``).
 * ``--ecs-python-version``: Python version for the container (default: ``3.12.11``).
-* ``--max-task-concurrency`` (``-mtc``): Maximum number of Fargate tasks (default: local CPU count).
+* ``--max-task-concurrency`` (``-mtc``): Maximum total number of workers across all Fargate tasks (default: local CPU count). The number of tasks launched is ``ceil(max_task_concurrency / ecs_task_cpu)``, so the actual worker count may exceed ``max_task_concurrency`` by up to ``ecs_task_cpu - 1`` due to rounding.
 
 Common Parameters
 ~~~~~~~~~~~~~~~~~

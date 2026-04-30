@@ -36,13 +36,12 @@ class ObjectStorageServerProcess(multiprocessing.get_context("spawn").Process): 
         start_time = time.time()
         while time.time() - start_time < 30:
             try:
-                # Try to connect to the port
                 with socket.create_connection((host, port), timeout=1):
                     return
             except (ConnectionRefusedError, socket.timeout, OSError):
                 time.sleep(0.1)
 
-        raise TimeoutError(f"ObjectStorageServer at {host}:{port} failed to start within 30 seconds")
+        raise TimeoutError(f"ObjectStorageServer at {self._bind_address!r} failed to start within 30 seconds")
 
     def run(self) -> None:
         setup_logger(self._logging_paths, self._logging_config_file, self._logging_level)
@@ -52,13 +51,6 @@ class ObjectStorageServerProcess(multiprocessing.get_context("spawn").Process): 
 
         self._server = ObjectStorageServer()
         try:
-            self._server.run(
-                self._bind_address.host,
-                self._bind_address.port,
-                self._ident,
-                log_level_str,
-                log_format_str,
-                logging_paths,
-            )
+            self._server.run(repr(self._bind_address), self._ident, log_level_str, log_format_str, logging_paths)
         except KeyboardInterrupt:
             logging.info("ObjectStorageServer: received KeyboardInterrupt, shutting down")

@@ -11,7 +11,7 @@ std::expected<ConnectorSocket, Error> ConnectorSocket::connect(
     Identity identity,
     std::string address,
     size_t maxRetryTimes,
-    std::chrono::milliseconds initRetryDelay)
+    std::chrono::milliseconds initRetryDelay) noexcept
 {
     auto result = future::ConnectorSocket::connect(
         context, std::move(identity), std::move(address), maxRetryTimes, initRetryDelay);
@@ -22,7 +22,7 @@ std::expected<ConnectorSocket, Error> ConnectorSocket::connect(
 }
 
 std::expected<std::pair<ConnectorSocket, Address>, Error> ConnectorSocket::bind(
-    IOContext& context, Identity identity, std::string address)
+    IOContext& context, Identity identity, std::string address) noexcept
 {
     auto result = future::ConnectorSocket::bind(context, std::move(identity), std::move(address));
     if (!result.has_value()) {
@@ -41,12 +41,12 @@ const Identity& ConnectorSocket::identity() const noexcept
     return _socket.identity();
 }
 
-std::expected<void, Error> ConnectorSocket::sendMessage(Bytes messagePayload)
+std::expected<void, Error> ConnectorSocket::sendMessage(Bytes messagePayload) noexcept
 {
     return _socket.sendMessage(std::move(messagePayload)).get();
 }
 
-std::expected<Message, Error> ConnectorSocket::recvMessage()
+std::expected<Message, Error> ConnectorSocket::recvMessage() noexcept
 {
     return _socket.recvMessage().get();
 }

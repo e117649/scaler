@@ -339,55 +339,55 @@ TestResult clientSendsEmptyMessages(std::string address)
     return TestResult::Success;
 }
 
-// TODO: Multicast/Unicast sockets are not yet implemented in ymq
-
-/*
-TestResult pubsubSubscriber(std::string address, std::string topic, int differentiator, void* sem)
+TestResult multicastSubscriber(std::string address, Identity identity)
 {
-    IOContext context{};
+    IOContext context {};
 
-    // auto socket = scaler::ymq::sync::UnicastSocket{
-    //     context, std::format("{}_subscriber_{}", topic, differentiator)};
+    auto socketResult = scaler::ymq::sync::ConnectorSocket::connect(context, identity, address);
+    RETURN_FAILURE_IF_FALSE(socketResult.has_value());
 
-    std::this_thread::sleep_for(std::chrono::milliseconds{500});
+    auto socket = std::move(socketResult.value());
 
-    // Connect to address
+    auto error = socket.sendMessage(Bytes {"ready"});
+    RETURN_FAILURE_IF_FALSE(error.has_value());
 
-    std::this_thread::sleep_for(std::chrono::milliseconds{500});
+    auto msg = socket.recvMessage();
+    RETURN_FAILURE_IF_FALSE(msg.has_value());
+    RETURN_FAILURE_IF_FALSE(msg->payload.as_string() == "valid multicast message");
 
-    // Receive message
-    // auto msg = socket.recvMessage();
-    // RETURN_FAILURE_IF_FALSE(msg.has_value());
-    // RETURN_FAILURE_IF_FALSE(msg->payload.as_string() == "hello");
+    msg = socket.recvMessage();
+    RETURN_FAILURE_IF_FALSE(msg.has_value());
+    RETURN_FAILURE_IF_FALSE(msg->payload.as_string() == "valid broadcast message");
 
     return TestResult::Success;
 }
 
-TestResult pubsubPublisher(std::string address, std::string topic, void* sem, int n)
+TestResult multicastPublisher(std::string address, Identity identityPrefix, int nSubscribers)
 {
-    IOContext context{};
+    IOContext context {};
 
-    // Implement Multicast socket type
-    // auto socket = scaler::ymq::sync::MulticastSocket{context, "publisher"};
-    // auto bindResult = socket.bindTo(address);
-    // RETURN_FAILURE_IF_FALSE(bindResult.has_value());
+    scaler::ymq::sync::BinderSocket socket {context, "publisher"};
+    auto bindResult = socket.bindTo(address);
+    RETURN_FAILURE_IF_FALSE(bindResult.has_value());
 
-    // Wait for subscribers to be ready using semaphore
+    // Wait for subscribers to be ready
+    for (int i = 0; i < nSubscribers; ++i) {
+        auto msg = socket.recvMessage();
+        RETURN_FAILURE_IF_FALSE(msg.has_value());
+        RETURN_FAILURE_IF_FALSE(msg->payload.as_string() == "ready");
+    }
 
-    // Send messages to wrong topics
-    // auto error = socket.sendMessage(std::format("x{}", topic), Bytes{"no one should get this"});
-    // RETURN_FAILURE_IF_FALSE(error.has_value());
+    // Send multicast message
+    socket.sendMulticastMessage(Bytes("invalid message"), "unknown-identity-prefix");
+    socket.sendMulticastMessage(Bytes("valid multicast message"), identityPrefix);
 
-    // error = socket.sendMessage(std::format("{}x", topic), Bytes{"no one should get this either"});
-    // RETURN_FAILURE_IF_FALSE(error.has_value());
+    // Send broadcast message
+    socket.sendMulticastMessage(Bytes("valid broadcast message"));
 
-    // Send message to correct topic
-    // error = socket.sendMessage(topic, Bytes{"hello"});
-    // RETURN_FAILURE_IF_FALSE(error.has_value());
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));  // Wait for messages to be received
 
     return TestResult::Success;
 }
-*/
 
 TestResult clientCloseEstablishedConnectionClient(std::string address)
 {
@@ -647,56 +647,21 @@ TEST_P(YMQSocketTest, TestClientSendEmptyMessage)
     EXPECT_EQ(result, TestResult::Success);
 }
 
-// this case tests the publish-subscribe pattern of ymq
-// we create one publisher and two subscribers with a common topic
-// the publisher will send two messages to the wrong topic
-// none of the subscribers should receive these
-// and then the publisher will send a message to the correct topic
-// both subscribers should receive this message
-//
-// NOTE: Multicast/Unicast sockets are not yet implemented
-/*
-TEST_P(YMQSocketTest, TestPubSub)
+// We create one publisher and two subscribers who share an identity prefix.
+// Then the publisher sends multicast messages filtered by that prefix that both subscribers should receive.
+TEST_P(YMQSocketTest, TestMulticast)
 {
     const auto address = GetAddress(2900);
-    auto topic         = "mytopic";
-
-    // TODO: Implement cross-platform semaphore allocation
+    Identity prefix {"test_multicast_prefix"};
 
     auto result = test(
         20,
-        {[=] { return pubsubPublisher(address, topic, sem, 2); },
-         [=] { return pubsubSubscriber(address, topic, 0, sem); },
-         [=] { return pubsubSubscriber(address, topic, 1, sem); }});
-
-    // TODO: Cleanup semaphore
+        {[=] { return multicastPublisher(address, prefix, 2); },
+         [=] { return multicastSubscriber(address, prefix + "_subscriber_1"); },
+         [=] { return multicastSubscriber(address, prefix + "_subscriber_2"); }});
 
     EXPECT_EQ(result, TestResult::Success);
 }
-*/
-
-// this sets the publisher with an empty topic and the subscribers with two other topics
-// both subscribers should get all messages
-//
-// NOTE: Multicast/Unicast sockets are not yet implemented
-/*
-TEST_P(YMQSocketTest, TestPubSubEmptyTopic)
-{
-    const auto address = GetAddress(2906);
-
-    // TODO: Implement cross-platform semaphore allocation
-
-    auto result = test(
-        20,
-        {[=] { return pubsubPublisher(address, "", sem, 2); },
-         [=] { return pubsubSubscriber(address, "abc", 0, sem); },
-         [=] { return pubsubSubscriber(address, "def", 1, sem); }});
-
-    // TODO: Cleanup semaphore
-
-    EXPECT_EQ(result, TestResult::Success);
-}
-*/
 
 // in this test case, the client establishes a connection with the server and then explicitly closes it
 TEST_P(YMQSocketTest, TestClientCloseEstablishedConnection)

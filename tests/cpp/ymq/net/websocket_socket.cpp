@@ -2,8 +2,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <memory>
-#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -13,7 +13,9 @@
 #include "scaler/ymq/address.h"
 #include "scaler/ymq/internal/websocket_utils.h"
 
-// ─── Shared WebSocketSocket implementation ────────────────────────────────────
+// Split large payloads into 1 MiB frames so the receiver can decode and deliver
+// each chunk without accumulating the entire payload before the first delivery.
+static constexpr size_t MAX_FRAME_PAYLOAD = 1024 * 1024;
 
 WebSocketSocket::WebSocketSocket(long long fd, bool isServer): _fd(fd), _isServer(isServer)
 {
@@ -80,9 +82,6 @@ void WebSocketSocket::rawReadExact(void* buffer, size_t size) const
 
 void WebSocketSocket::sendFrame(const void* data, size_t size) const
 {
-    // Split large payloads into 1 MiB frames so the receiver can decode and deliver
-    // each chunk without accumulating the entire payload before the first delivery.
-    static constexpr size_t MAX_FRAME_PAYLOAD = 1024 * 1024;
     if (size > MAX_FRAME_PAYLOAD) {
         const auto* bytes = static_cast<const uint8_t*>(data);
         for (size_t offset = 0; offset < size; offset += MAX_FRAME_PAYLOAD) {
@@ -208,9 +207,10 @@ void WebSocketSocket::performClientHandshake(const scaler::ymq::WebSocketAddress
     if (response.find("101") == std::string::npos)
         throw std::runtime_error("WebSocket handshake failed: server did not return 101");
 
-    const auto accept = scaler::ymq::internal::extractHeader(
-        std::string_view(response).substr(0, response.size() - 4), "Sec-WebSocket-Accept");
-    if (!accept.has_value() || *accept != scaler::ymq::internal::computeWebSocketAccept(key))
+    const auto headers =
+        scaler::ymq::internal::extractHeaders(std::string_view(response).substr(0, response.size() - 4));
+    const auto acceptIt = headers.find("sec-websocket-accept");
+    if (acceptIt == headers.end() || acceptIt->second != scaler::ymq::internal::computeWebSocketAccept(key))
         throw std::runtime_error("WebSocket handshake failed: invalid Sec-WebSocket-Accept");
 }
 
@@ -223,9 +223,10 @@ void WebSocketSocket::performServerHandshake() const
         request += ch;
     }
 
-    const auto key = scaler::ymq::internal::extractHeader(
-        std::string_view(request).substr(0, request.size() - 4), "Sec-WebSocket-Key");
-    if (!key.has_value())
+    const auto reqHeaders =
+        scaler::ymq::internal::extractHeaders(std::string_view(request).substr(0, request.size() - 4));
+    const auto keyIt = reqHeaders.find("sec-websocket-key");
+    if (keyIt == reqHeaders.end())
         throw std::runtime_error("WebSocket handshake failed: missing Sec-WebSocket-Key");
 
     const std::string response =
@@ -233,7 +234,7 @@ void WebSocketSocket::performServerHandshake() const
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         "Sec-WebSocket-Accept: " +
-        scaler::ymq::internal::computeWebSocketAccept(*key) +
+        scaler::ymq::internal::computeWebSocketAccept(keyIt->second) +
         "\r\n"
         "\r\n";
     rawWriteAll(response.data(), response.size());

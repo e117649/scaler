@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 import asyncio
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, List, Tuple
 
 from scaler.protocol.capnp import ProcessorStatus, Task, TaskCancel, WorkerManagerCommandResponse
-from scaler.utility.identifiers import TaskID
+from scaler.utility.identifiers import TaskID, WorkerID
 
 if TYPE_CHECKING:
+    from scaler.protocol.capnp import WorkerManagerCommand
     from scaler.worker_manager_adapter.task_manager import TaskManager
 
 Status = WorkerManagerCommandResponse.Status
@@ -13,7 +16,7 @@ Status = WorkerManagerCommandResponse.Status
 
 class ProcessorStatusProvider(ABC):
     @abstractmethod
-    def set_task_manager(self, task_manager: "TaskManager") -> None: ...
+    def set_task_manager(self, task_manager: TaskManager) -> None: ...
 
     @abstractmethod
     def get_processor_statuses(self) -> List[ProcessorStatus]: ...
@@ -44,9 +47,34 @@ class ExecutionBackend(ABC):
     def register(self, load_task_inputs: Callable[[Task], Awaitable[Tuple[Any, List[Any]]]]) -> None: ...
 
 
-class WorkerProvisioner(ABC):
+class ImperativeWorkerProvisioner(ABC):
     @abstractmethod
-    async def start_worker(self) -> Tuple[List[bytes], Status]: ...
+    async def start_worker(self) -> Tuple[List[WorkerID], Status]: ...
 
     @abstractmethod
-    async def shutdown_workers(self, worker_ids: List[bytes]) -> Tuple[List[bytes], Status]: ...
+    async def shutdown_workers(self, worker_ids: List[WorkerID]) -> Tuple[List[WorkerID], Status]: ...
+
+
+class DeclarativeWorkerProvisioner(ABC):
+    """Provisioner that converges toward a desired task concurrency via start_units/stop_units.
+
+    A unit is the atomic resource this provisioner allocates — e.g. a VM, a container, or a
+    process group. One unit may host one or more workers (see workers_per_provisioner_unit in
+    WorkerManagerRunner). Units are identified by opaque strings whose meaning is
+    implementation-defined (e.g. an EC2 instance ID).
+    """
+
+    @abstractmethod
+    async def set_desired_task_concurrency(
+        self, requests: List[WorkerManagerCommand.DesiredTaskConcurrencyRequest]
+    ) -> None: ...
+
+    @abstractmethod
+    async def start_units(self, count: int) -> None:
+        """Launch `count` new units."""
+        ...
+
+    @abstractmethod
+    async def stop_units(self, count: int) -> None:
+        """Shut down `count` units."""
+        ...

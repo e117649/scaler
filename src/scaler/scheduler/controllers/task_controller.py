@@ -181,7 +181,14 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         await self.__routing(task_id, TaskTransition.workerDisconnect, worker_id=worker_id)
 
     def get_status(self) -> TaskManagerStatus:
-        return TaskManagerStatus(stateToCount=self._task_state_manager.get_statistics())
+        statistics = self._task_state_manager.get_statistics()
+
+        return TaskManagerStatus(
+            stateToCount=[
+                TaskManagerStatus.Pair(state=task_state.value, count=count)  # type: ignore[attr-defined]
+                for task_state, count in statistics.items()
+            ]
+        )
 
     async def __state_inactive(self, task_id: TaskID, state_machine: TaskStateMachine, task: Task):
         assert task_id == task.taskId

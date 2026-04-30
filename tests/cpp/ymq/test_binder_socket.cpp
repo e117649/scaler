@@ -158,6 +158,55 @@ TEST_F(YMQBinderSocketTest, SendMessage)
     ASSERT_EQ(sendCallbackCalled.get_future().wait_for(std::chrono::seconds {5}), std::future_status::ready);
 }
 
+TEST_F(YMQBinderSocketTest, SendMulticastMessage)
+{
+    // Test that the binder can multicast and broadcast messages
+
+    bool clientMessageReceived = false;
+
+    auto onClientRecvMessage = [&](scaler::ymq::Bytes receivedPayload) {
+        ASSERT_FALSE(clientMessageReceived);
+        ASSERT_EQ(receivedPayload.as_string(), messagePayload);
+        clientMessageReceived = true;
+    };
+
+    auto onClientDisconnect = [](auto) { FAIL() << "Unexpected disconnect on client"; };
+
+    BinderClientPair connections(std::move(onClientRecvMessage), std::move(onClientDisconnect));
+
+    scaler::ymq::BinderSocket& binder = connections.binder();
+    scaler::wrapper::uv::Loop& loop   = connections.loop();
+
+    // Make sure the client is ready
+
+    binder.sendMessage(BinderClientPair::clientIdentity, scaler::ymq::Bytes(messagePayload), [](auto) {});
+
+    while (!clientMessageReceived) {
+        loop.run(UV_RUN_ONCE);
+    }
+
+    clientMessageReceived = false;
+
+    // Send a broadcast message
+
+    binder.sendMulticastMessage(scaler::ymq::Bytes(messagePayload));
+
+    while (!clientMessageReceived) {
+        loop.run(UV_RUN_ONCE);
+    }
+
+    clientMessageReceived = false;
+
+    // Send two multicast messages, should only receive the one with the matching prefix
+
+    binder.sendMulticastMessage(scaler::ymq::Bytes("unexpected multicast message"), "invalid-prefix");
+    binder.sendMulticastMessage(scaler::ymq::Bytes(messagePayload), BinderClientPair::clientIdentity.substr(0, 5));
+
+    while (!clientMessageReceived) {
+        loop.run(UV_RUN_ONCE);
+    }
+}
+
 TEST_F(YMQBinderSocketTest, RecvMessage)
 {
     // Test that the binder can receive messages

@@ -133,7 +133,11 @@ protected:
         serverPort = std::to_string(getAvailableTCPPort());
 
         serverThread = std::thread([this] {
-            server->run(SERVER_HOST, serverPort, "ObjectStorageServerTest", "INFO", "%(levelname)s: %(message)s");
+            server->run(
+                "tcp://" + SERVER_HOST + ":" + serverPort,
+                "ObjectStorageServerTest",
+                "INFO",
+                "%(levelname)s: %(message)s");
         });
 
         server->waitUntilReady();
@@ -741,8 +745,7 @@ protected:
 
         serverThread = std::thread([this] {
             server->run(
-                SERVER_HOST,
-                serverPort,
+                "tcp://" + SERVER_HOST + ":" + serverPort,
                 "ObjectStorageLoggingTest",
                 "INFO",
                 "%(levelname)s: %(message)s",

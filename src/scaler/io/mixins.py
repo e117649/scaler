@@ -1,4 +1,6 @@
 import abc
+import threading
+from datetime import timedelta
 from enum import Enum
 from typing import Awaitable, Callable, Optional
 
@@ -56,6 +58,16 @@ class NetworkBackend(metaclass=abc.ABCMeta):
     def create_sync_object_storage_connector(
         self, identity: bytes, address: AddressConfig
     ) -> "SyncObjectStorageConnector":
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def create_sync_subscriber(
+        self,
+        identity: bytes,
+        address: AddressConfig,
+        callback: Callable[[BaseMessage], None],
+        timeout: Optional[timedelta],
+    ) -> "SyncSubscriber":
         raise NotImplementedError()
 
 
@@ -233,7 +245,7 @@ class SyncObjectStorageConnector(metaclass=abc.ABCMeta):
         raise NotImplementedError()
 
 
-class SyncSubscriber(metaclass=abc.ABCMeta):
+class SyncSubscriber(threading.Thread, metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def destroy(self):
         raise NotImplementedError()

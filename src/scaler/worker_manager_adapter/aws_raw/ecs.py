@@ -1,4 +1,5 @@
 import logging
+import math
 import shlex
 import uuid
 from dataclasses import dataclass
@@ -8,8 +9,9 @@ import boto3
 
 from scaler.config.section.ecs_worker_manager import ECSWorkerManagerConfig
 from scaler.protocol.capnp import WorkerManagerCommandResponse
+from scaler.utility.identifiers import WorkerID
 from scaler.worker_manager_adapter.common import format_capabilities
-from scaler.worker_manager_adapter.mixins import WorkerProvisioner
+from scaler.worker_manager_adapter.mixins import ImperativeWorkerProvisioner
 from scaler.worker_manager_adapter.worker_manager_runner import WorkerManagerRunner
 
 Status = WorkerManagerCommandResponse.Status
@@ -22,7 +24,7 @@ class _WorkerGroupInfo:
     task_arn: str
 
 
-class ECSWorkerProvisioner(WorkerProvisioner):
+class ECSWorkerProvisioner(ImperativeWorkerProvisioner):
     def __init__(self, config: ECSWorkerManagerConfig) -> None:
         self._worker_scheduler_address = config.worker_manager_config.effective_worker_scheduler_address
         self._object_storage_address = config.worker_manager_config.object_storage_address
@@ -30,6 +32,9 @@ class ECSWorkerProvisioner(WorkerProvisioner):
         self._io_threads = config.worker_config.io_threads
         self._per_worker_task_queue_size = config.worker_config.per_worker_task_queue_size
         self._max_task_concurrency = config.worker_manager_config.max_task_concurrency
+        self._max_instances = (
+            math.ceil(self._max_task_concurrency / config.ecs_task_cpu) if self._max_task_concurrency != -1 else -1
+        )
         self._heartbeat_interval_seconds = config.worker_config.heartbeat_interval_seconds
         self._task_timeout_seconds = config.worker_config.task_timeout_seconds
         self._death_timeout_seconds = config.worker_config.death_timeout_seconds
@@ -98,8 +103,8 @@ class ECSWorkerProvisioner(WorkerProvisioner):
             )
         self._ecs_task_definition = resp["taskDefinition"]["taskDefinitionArn"]
 
-    async def start_worker(self) -> Tuple[List[bytes], Status]:
-        if self._max_task_concurrency != -1 and len(self._worker_groups) >= self._max_task_concurrency:
+    async def start_worker(self) -> Tuple[List[WorkerID], Status]:
+        if self._max_instances != -1 and len(self._worker_groups) >= self._max_instances:
             return [], Status.tooManyWorkers
 
         command = (
@@ -166,7 +171,7 @@ class ECSWorkerProvisioner(WorkerProvisioner):
 
         return [], Status.success
 
-    async def shutdown_workers(self, worker_ids: List[bytes]) -> Tuple[List[bytes], Status]:
+    async def shutdown_workers(self, worker_ids: List[WorkerID]) -> Tuple[List[WorkerID], Status]:
         if not self._worker_groups:
             return [], Status.workerNotFound
 
@@ -187,16 +192,18 @@ class ECSWorkerProvisioner(WorkerProvisioner):
 class ECSWorkerManager:
     def __init__(self, config: ECSWorkerManagerConfig) -> None:
         provisioner = ECSWorkerProvisioner(config)
+        mtc = config.worker_manager_config.max_task_concurrency
+        max_instances = math.ceil(mtc / config.ecs_task_cpu) if mtc != -1 else -1
         self._runner = WorkerManagerRunner(
             address=config.worker_manager_config.scheduler_address,
             name="worker_manager_ecs",
             heartbeat_interval_seconds=config.worker_config.heartbeat_interval_seconds,
             capabilities=config.worker_config.per_worker_capabilities.capabilities,
-            max_task_concurrency=config.worker_manager_config.max_task_concurrency,
+            max_provisioner_units=max_instances,
             worker_manager_id=config.worker_manager_config.worker_manager_id.encode(),
             worker_provisioner=provisioner,
             io_threads=config.worker_config.io_threads,
-            heartbeat_concurrency_multiplier=config.ecs_task_cpu,
+            workers_per_provisioner_unit=config.ecs_task_cpu,
         )
 
     def run(self) -> None:

@@ -8,13 +8,13 @@ from scaler.config.section.native_worker_manager import NativeWorkerManagerConfi
 from scaler.protocol.capnp import WorkerManagerCommandResponse
 from scaler.utility.identifiers import WorkerID
 from scaler.worker.worker import Worker
-from scaler.worker_manager_adapter.mixins import WorkerProvisioner
+from scaler.worker_manager_adapter.mixins import ImperativeWorkerProvisioner
 from scaler.worker_manager_adapter.worker_manager_runner import WorkerManagerRunner
 
 Status = WorkerManagerCommandResponse.Status
 
 
-class NativeWorkerProvisioner(WorkerProvisioner):
+class NativeWorkerProvisioner(ImperativeWorkerProvisioner):
     def __init__(self, config: NativeWorkerManagerConfig) -> None:
         self._worker_scheduler_address = config.worker_manager_config.effective_worker_scheduler_address
         self._object_storage_address = config.worker_manager_config.object_storage_address
@@ -85,7 +85,7 @@ class NativeWorkerProvisioner(WorkerProvisioner):
         for worker in self._workers.values():
             worker.join()
 
-    async def start_worker(self) -> Tuple[List[bytes], Status]:
+    async def start_worker(self) -> Tuple[List[WorkerID], Status]:
         if self._max_task_concurrency != -1 and len(self._workers) >= self._max_task_concurrency:
             return [], Status.tooManyWorkers
 
@@ -93,20 +93,18 @@ class NativeWorkerProvisioner(WorkerProvisioner):
         worker.start()
         self._workers[worker.identity] = worker
         logging.info(f"Started native worker {worker.identity!r}")
-        return [bytes(worker.identity)], Status.success
+        return [worker.identity], Status.success
 
-    async def shutdown_workers(self, worker_ids: List[bytes]) -> Tuple[List[bytes], Status]:
+    async def shutdown_workers(self, worker_ids: List[WorkerID]) -> Tuple[List[WorkerID], Status]:
         if not worker_ids:
             return [], Status.workerNotFound
 
-        for wid_bytes in worker_ids:
-            wid = WorkerID(wid_bytes)
+        for wid in worker_ids:
             if wid not in self._workers:
                 logging.warning(f"Worker with ID {wid!r} does not exist.")
                 return [], Status.workerNotFound
 
-        for wid_bytes in worker_ids:
-            wid = WorkerID(wid_bytes)
+        for wid in worker_ids:
             worker = self._workers.pop(wid)
             os.kill(worker.pid, signal.SIGINT)
             worker.join()
@@ -134,7 +132,7 @@ class NativeWorkerManager:
             name="worker_manager_native",
             heartbeat_interval_seconds=self._config.worker_config.heartbeat_interval_seconds,
             capabilities=self._config.worker_config.per_worker_capabilities.capabilities,
-            max_task_concurrency=self._config.worker_manager_config.max_task_concurrency,
+            max_provisioner_units=self._config.worker_manager_config.max_task_concurrency,
             worker_manager_id=self._config.worker_manager_config.worker_manager_id.encode(),
             worker_provisioner=provisioner,
             io_threads=self._config.worker_config.io_threads,

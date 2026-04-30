@@ -88,8 +88,9 @@ class ObjectMetadata(CapnpStruct):
 class ObjectStorageAddress(CapnpStruct):
     host: str
     port: int
+    scheme: str
     @staticmethod
-    def new_msg(host: str, port: int) -> "ObjectStorageAddress": ...
+    def new_msg(host: str, port: int, scheme: str) -> "ObjectStorageAddress": ...
 
 class Resource(CapnpStruct):
     cpu: int
@@ -250,11 +251,17 @@ class WorkerManagerCommandType(EnumFieldValue):
     def __new__(cls, value: int) -> "WorkerManagerCommandType": ...
     startWorkers: ClassVar["WorkerManagerCommandType"]
     shutdownWorkers: ClassVar["WorkerManagerCommandType"]
+    setDesiredTaskConcurrency: ClassVar["WorkerManagerCommandType"]
 
 class WorkerManagerCommand(BaseMessage):
     workerIDs: Any
     command: WorkerManagerCommandType
     capabilities: Any
+    setDesiredTaskConcurrencyRequests: Any
+
+    class DesiredTaskConcurrencyRequest(CapnpStruct):
+        taskConcurrency: int
+        capabilities: Any
 
 class WorkerManagerCommandResponse(BaseMessage):
     command: WorkerManagerCommandType

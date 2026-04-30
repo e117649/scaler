@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import signal
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from scaler.config.types.address import AddressConfig
 from scaler.io import ymq
@@ -17,7 +17,8 @@ from scaler.protocol.capnp import (
     WorkerManagerHeartbeatEcho,
 )
 from scaler.utility.event_loop import create_async_loop_routine, run_task_forever
-from scaler.worker_manager_adapter.mixins import WorkerProvisioner
+from scaler.utility.identifiers import WorkerID
+from scaler.worker_manager_adapter.mixins import DeclarativeWorkerProvisioner, ImperativeWorkerProvisioner
 
 Status = WorkerManagerCommandResponse.Status
 
@@ -29,21 +30,21 @@ class WorkerManagerRunner:
         name: str,
         heartbeat_interval_seconds: int,
         capabilities: Dict[str, int],
-        max_task_concurrency: int,
+        max_provisioner_units: int,
         worker_manager_id: bytes,
-        worker_provisioner: WorkerProvisioner,
+        worker_provisioner: Union[ImperativeWorkerProvisioner, DeclarativeWorkerProvisioner],
         io_threads: int = 1,
-        heartbeat_concurrency_multiplier: int = 1,
+        workers_per_provisioner_unit: int = 1,
     ) -> None:
         self._address = address
         self._name = name
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
         self._capabilities = capabilities
-        self._max_task_concurrency = max_task_concurrency
+        self._max_provisioner_units = max_provisioner_units
         self._worker_manager_id = worker_manager_id
         self._worker_provisioner = worker_provisioner
         self._io_threads = io_threads
-        self._heartbeat_concurrency_multiplier = heartbeat_concurrency_multiplier
+        self._workers_per_provisioner_unit = workers_per_provisioner_unit
 
         self._backend: Optional[NetworkBackend] = None
         self._connector_external: Optional[AsyncConnector] = None
@@ -85,7 +86,7 @@ class WorkerManagerRunner:
     async def _send_heartbeat(self) -> None:
         await self._connector_external.send(
             WorkerManagerHeartbeat(
-                maxTaskConcurrency=self._max_task_concurrency * self._heartbeat_concurrency_multiplier,
+                maxTaskConcurrency=self._max_provisioner_units * self._workers_per_provisioner_unit,
                 capabilities=self._capabilities,
                 workerManagerID=self._worker_manager_id,
             )
@@ -127,17 +128,36 @@ class WorkerManagerRunner:
     async def _handle_command(self, command: WorkerManagerCommand) -> None:
         cmd_type = command.command
         response_status: Status = Status.success
-        worker_ids: List[bytes] = []
+        worker_ids: List[WorkerID] = []
         capabilities: Dict[str, int] = {}
 
         if cmd_type == WorkerManagerCommandType.startWorkers:
-            worker_ids, response_status = await self._worker_provisioner.start_worker()
-            if response_status == Status.success:
-                capabilities = self._capabilities
+            if isinstance(self._worker_provisioner, ImperativeWorkerProvisioner):
+                worker_ids, response_status = await self._worker_provisioner.start_worker()
+                if response_status == Status.success:
+                    capabilities = self._capabilities
+            else:
+                # declarative provisioners send a no-op success so the scheduler's
+                # single-in-flight gate is not blocked waiting for a response that never comes
+                logging.debug(f"Ignoring unimplemented WorkerManagerCommand: {cmd_type!r}")
         elif cmd_type == WorkerManagerCommandType.shutdownWorkers:
-            worker_ids, response_status = await self._worker_provisioner.shutdown_workers(list(command.workerIDs))
+            if isinstance(self._worker_provisioner, ImperativeWorkerProvisioner):
+                worker_ids, response_status = await self._worker_provisioner.shutdown_workers(
+                    [WorkerID(wid) for wid in command.workerIDs]
+                )
+            else:
+                logging.debug(f"Ignoring unimplemented WorkerManagerCommand: {cmd_type!r}")
+        elif cmd_type == WorkerManagerCommandType.setDesiredTaskConcurrency:
+            if isinstance(self._worker_provisioner, DeclarativeWorkerProvisioner):
+                await self._worker_provisioner.set_desired_task_concurrency(
+                    list(command.setDesiredTaskConcurrencyRequests)
+                )
+            else:
+                logging.debug(f"Ignoring unimplemented WorkerManagerCommand: {cmd_type!r}")
+            return
         else:
-            raise ValueError(f"Unknown WorkerManagerCommand: {cmd_type!r}")
+            logging.debug(f"Ignoring unimplemented WorkerManagerCommand: {cmd_type!r}")
+            return
 
         await self._connector_external.send(
             WorkerManagerCommandResponse(

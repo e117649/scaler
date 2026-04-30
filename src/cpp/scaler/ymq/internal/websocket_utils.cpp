@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
+#include <map>
 #include <random>
 #include <string>
 #include <string_view>
@@ -95,6 +96,14 @@ std::string base64Encode(std::span<const uint8_t> data) noexcept
     return result;
 }
 
+std::string toLower(std::string_view s) noexcept
+{
+    std::string result(s);
+    for (char& c: result)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return result;
+}
+
 std::string generateWebSocketKey() noexcept
 {
     static thread_local std::mt19937 rng(std::random_device {}());
@@ -115,25 +124,31 @@ std::string computeWebSocketAccept(const std::string& key) noexcept
     return base64Encode(std::span<const uint8_t>(digest));
 }
 
-std::optional<std::string> extractHeader(std::string_view headers, std::string_view name) noexcept
+std::map<std::string, std::string> extractHeaders(std::string_view headers) noexcept
 {
-    std::string lowerHeaders(headers);
-    std::string lowerName(name);
-    for (char& c: lowerHeaders)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    for (char& c: lowerName)
-        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    lowerName += ":";
-
-    const size_t pos = lowerHeaders.find(lowerName);
-    if (pos == std::string::npos)
-        return std::nullopt;
-
-    size_t valueStart = pos + lowerName.size();
-    while (valueStart < headers.size() && (headers[valueStart] == ' ' || headers[valueStart] == '\t'))
-        ++valueStart;
-    const size_t lineEnd = headers.find("\r\n", valueStart);
-    return std::string(headers.substr(valueStart, lineEnd - valueStart));
+    std::map<std::string, std::string> result;
+    // Skip the request/status line.
+    size_t pos = headers.find("\r\n");
+    if (pos == std::string_view::npos)
+        return result;
+    pos += 2;
+    while (pos < headers.size()) {
+        const size_t lineEnd        = headers.find("\r\n", pos);
+        const size_t end            = (lineEnd == std::string_view::npos) ? headers.size() : lineEnd;
+        const std::string_view line = headers.substr(pos, end - pos);
+        const size_t colon          = line.find(':');
+        if (colon != std::string_view::npos) {
+            std::string name  = toLower(line.substr(0, colon));
+            size_t valueStart = colon + 1;
+            while (valueStart < line.size() && (line[valueStart] == ' ' || line[valueStart] == '\t'))
+                ++valueStart;
+            result[std::move(name)] = std::string(line.substr(valueStart));
+        }
+        if (lineEnd == std::string_view::npos)
+            break;
+        pos = lineEnd + 2;
+    }
+    return result;
 }
 
 }  // namespace internal

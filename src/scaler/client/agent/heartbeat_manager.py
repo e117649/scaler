@@ -53,8 +53,14 @@ class ClientHeartbeatManager(Looper, HeartbeatManager):
             return
 
         object_storage_address_message = heartbeat.objectStorageAddress
+        # scheme is empty when talking to a scheduler that predates this field; fall back to tcp
+        scheme = (
+            SocketType(object_storage_address_message.scheme)
+            if object_storage_address_message.scheme
+            else SocketType.tcp
+        )
         self._object_storage_address.set_result(
-            AddressConfig(SocketType.tcp, object_storage_address_message.host, object_storage_address_message.port)
+            AddressConfig(scheme, object_storage_address_message.host, object_storage_address_message.port)
         )
 
     async def routine(self):

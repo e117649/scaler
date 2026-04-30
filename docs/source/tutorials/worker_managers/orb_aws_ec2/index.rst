@@ -152,7 +152,7 @@ Worker Image Customization Modes
 
 The adapter supports two mutually exclusive worker-image modes. Choose exactly one:
 
-* Use an existing pre-built AMI image.
+* Use an existing pre-built AMI.
 * Use a base image and install Python/packages when instances start.
 
 **Base Image + Startup Install**
@@ -277,7 +277,7 @@ ORB AWS EC2 Template Configuration
     installed via ``pip install -r``. ``opengris-scaler`` must be included. Required when ``--image-id`` is
     not specified.
 *   ``--instance-type``: EC2 instance type (default: ``t2.micro``).
-*   ``--aws-region``: AWS region (default: ``us-east-1``).
+*   ``--aws-region``: AWS region where ORB launches worker instances (required).
 *   ``--key-name``: AWS key pair name for the instances. If not provided, a temporary key pair will be created and deleted on cleanup.
 *   ``--subnet-id``: AWS subnet ID where the instances will be launched. If not provided, it attempts to discover the default subnet in the default VPC.
 *   ``--security-group-ids``: Comma-separated list of AWS security group IDs.
@@ -286,6 +286,11 @@ Common Parameters
 ~~~~~~~~~~~~~~~~~
 
 For a full list of common parameters including networking (``--worker-manager-id``, ``--max-task-concurrency``, ``--object-storage-address``, etc.), worker configuration, and logging, see :doc:`../common_parameters`.
+
+.. note::
+    For the ORB AWS EC2 manager, ``--max-task-concurrency`` is the total number of workers, not the number of instances. Each EC2 instance runs one worker per vCPU, so the number of instances launched is ``ceil(max_task_concurrency / vcpus_per_instance)``. The vCPU count is retrieved automatically from the AWS EC2 API for the configured ``--instance-type``.
+
+    **Example** — ``--max-task-concurrency 10`` with ``--instance-type c5.xlarge`` (4 vCPUs): ``ceil(10 / 4) = 3`` instances are launched, yielding 12 active workers.
 
 Cleanup
 -------

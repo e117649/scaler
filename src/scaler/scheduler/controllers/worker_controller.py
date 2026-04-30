@@ -83,7 +83,9 @@ class VanillaWorkerController(WorkerController, Looper, Reporter):
             worker_id,
             WorkerHeartbeatEcho(
                 objectStorageAddress=ObjectStorageAddress(
-                    host=object_storage_address.host, port=object_storage_address.port
+                    host=object_storage_address.host,
+                    port=object_storage_address.port,
+                    scheme=object_storage_address.type.value,
                 )
             ),
         )

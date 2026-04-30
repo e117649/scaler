@@ -39,21 +39,33 @@ class TestConfigTypes(unittest.TestCase):
         cfg = AddressConfig.from_string("ipc://a-valid-path")
         self.assertEqual(cfg.host, "a-valid-path")
 
-    def test_address_config_websocket(self):
-        """Test AddressConfig.from_string accepts ws:// and wss:// with host:port."""
-        cfg = AddressConfig.from_string("ws://scheduler.example.com:5555")
-        self.assertEqual(cfg.host, "scheduler.example.com")
-        self.assertEqual(cfg.port, 5555)
-        self.assertEqual(str(cfg), "ws://scheduler.example.com:5555")
+    def test_address_config_ws(self):
+        cfg = AddressConfig.from_string("ws://127.0.0.1:8765/")
+        self.assertEqual(cfg.host, "127.0.0.1")
+        self.assertEqual(cfg.port, 8765)
+        self.assertEqual(cfg.path, "/")
+        self.assertEqual(str(cfg), "ws://127.0.0.1:8765/")
 
-        cfg_secure = AddressConfig.from_string("wss://example:443")
-        self.assertEqual(cfg_secure.host, "example")
-        self.assertEqual(cfg_secure.port, 443)
-        self.assertEqual(str(cfg_secure), "wss://example:443")
+    def test_address_config_ws_with_path(self):
+        cfg = AddressConfig.from_string("ws://127.0.0.1:9000/ymq/v1")
+        self.assertEqual(cfg.path, "/ymq/v1")
+        self.assertEqual(str(cfg), "ws://127.0.0.1:9000/ymq/v1")
 
-        # ws/wss require a port, like tcp.
+    def test_address_config_wss(self):
+        cfg = AddressConfig.from_string("wss://example.com:443/ymq")
+        self.assertEqual(cfg.host, "example.com")
+        self.assertEqual(cfg.port, 443)
+        self.assertEqual(cfg.path, "/ymq")
+        self.assertEqual(str(cfg), "wss://example.com:443/ymq")
+
+    def test_address_config_ws_default_path(self):
+        cfg = AddressConfig.from_string("ws://127.0.0.1:8765")
+        self.assertEqual(cfg.path, "/")
+        self.assertEqual(str(cfg), "ws://127.0.0.1:8765/")
+
+    def test_address_config_ws_invalid(self):
         with self.assertRaises(ValueError):
-            AddressConfig.from_string("ws://no-port")
+            AddressConfig.from_string("ws://127.0.0.1")
 
     def test_worker_names_config_value(self):
         """Test the WorkerNames ConfigType class."""

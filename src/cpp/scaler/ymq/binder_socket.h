@@ -58,6 +58,13 @@ public:
     // Send a message to a remote identity.
     void sendMessage(Identity remoteIdentity, Bytes messagePayload, SendMessageCallback onMessageSent) noexcept;
 
+    // Send a message to multiple currently connected peers.
+    //
+    // This method is "fire-and-forget" and always succeeds.
+    //
+    // If remotePrefix is provided, only peers whose identity starts with the prefix will receive the message.
+    void sendMulticastMessage(Bytes messagePayload, std::optional<Identity> remotePrefix = std::nullopt) noexcept;
+
     // Receive a message from any remote identity.
     void recvMessage(RecvMessageCallback onRecvMessage) noexcept;
 

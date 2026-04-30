@@ -66,6 +66,7 @@ struct ObjectMetadata {
 }
 
 struct ObjectStorageAddress {
-    host @0 :Text;
-    port @1 :UInt16;
+    host   @0 :Text;
+    port   @1 :UInt16;
+    scheme @2 :Text;
 }

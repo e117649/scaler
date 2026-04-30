@@ -60,7 +60,9 @@ class VanillaHeartbeatManager(Looper, HeartbeatManager):
 
         if self._object_storage_address is None:
             address_message = heartbeat.objectStorageAddress
-            self._object_storage_address = AddressConfig(SocketType.tcp, address_message.host, address_message.port)
+            # scheme is empty when talking to a scheduler that predates this field; fall back to tcp
+            scheme = SocketType(address_message.scheme) if address_message.scheme else SocketType.tcp
+            self._object_storage_address = AddressConfig(scheme, address_message.host, address_message.port)
             await self._connector_storage.connect(self._object_storage_address)
 
     async def routine(self):

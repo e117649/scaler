@@ -24,10 +24,10 @@ public:
         Identity identity,
         std::string address,
         size_t maxRetryTimes                     = defaultClientMaxRetryTimes,
-        std::chrono::milliseconds initRetryDelay = defaultClientInitRetryDelay);
+        std::chrono::milliseconds initRetryDelay = defaultClientInitRetryDelay) noexcept;
 
     static std::expected<std::pair<ConnectorSocket, Address>, Error> bind(
-        IOContext& context, Identity identity, std::string address);
+        IOContext& context, Identity identity, std::string address) noexcept;
 
     ~ConnectorSocket() noexcept = default;
 
@@ -39,9 +39,9 @@ public:
 
     const Identity& identity() const noexcept;
 
-    std::expected<void, Error> sendMessage(Bytes messagePayload);
+    std::expected<void, Error> sendMessage(Bytes messagePayload) noexcept;
 
-    std::expected<Message, Error> recvMessage();
+    std::expected<Message, Error> recvMessage() noexcept;
 
 private:
     ConnectorSocket(future::ConnectorSocket socket) noexcept;
