@@ -324,7 +324,6 @@ class ConnectorSocket:
     @classmethod
     def connect(
         cls,
-        callback: ConnectCallback,
         context: IOContext,
         identity: str,
         address: str,
@@ -333,11 +332,12 @@ class ConnectorSocket:
     ) -> "ConnectorSocket":
         """Create a ConnectorSocket and initiate connection to the remote address.
 
-        The callback is invoked synchronously with ``None`` to mirror the native
-        semantic of "socket is ready to accept queued operations". Send/recv
-        ops issued before the WebSocket actually opens are queued and dispatched
-        once the WebSocket transitions to OPEN. Connection failures surface
-        through the next pending recv/send callback rather than this callback.
+        Mirrors the public ``scaler.io.ymq.ConnectorSocket.connect`` surface
+        (the wrapper in ``sockets.py``): synchronous, returns the socket once
+        it is ready to accept queued operations. Send/recv ops issued before
+        the WebSocket actually opens are queued and dispatched once the
+        WebSocket transitions to OPEN. Connection failures surface through
+        the next pending recv/send callback.
 
         ``max_retry_times`` and ``init_retry_delay`` are accepted for API
         compatibility but ignored: browser WebSockets do not expose the retry
@@ -349,12 +349,6 @@ class ConnectorSocket:
 
         socket = cls(identity=identity, address=address)
         socket._open_websocket(ws_url)
-
-        # Call back synchronously: socket is ready to accept queued ops.
-        try:
-            callback(None)
-        except Exception:  # noqa: BLE001 — user callback errors must not corrupt our state
-            pass
         return socket
 
     @classmethod

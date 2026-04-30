@@ -154,7 +154,7 @@ class ConnectorSocketSurfaceTest(unittest.TestCase):
 
     def test_invalid_scheme_raises(self) -> None:
         with self.assertRaises(InvalidAddressFormatError):
-            ConnectorSocket.connect(lambda r: None, IOContext(), "id", "tcp://host:1")
+            ConnectorSocket.connect(IOContext(), "id", "tcp://host:1")
 
 
 class HandshakeTest(unittest.TestCase):
