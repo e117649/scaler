@@ -175,7 +175,7 @@ class YMQNetworkBackend(NetworkBackend):
 
 
 def get_scaler_network_backend_type_from_env() -> NetworkBackendType:
-    backend_str = os.environ.get("SCALER_NETWORK_BACKEND")  # Default to tcp_zmqq
+    backend_str = os.environ.get("SCALER_NETWORK_BACKEND")  # Default to tcp_zmq
     if backend_str is None:
         return SCALER_NETWORK_BACKEND
 

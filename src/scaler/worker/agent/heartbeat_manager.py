@@ -6,6 +6,7 @@ import psutil
 from scaler.config.types.address import AddressConfig, SocketType
 from scaler.io.mixins import AsyncConnector, AsyncObjectStorageConnector
 from scaler.protocol.capnp import ProcessorStatus, Resource, WorkerHeartbeat, WorkerHeartbeatEcho
+from scaler.protocol.helpers import dict_to_capabilities
 from scaler.utility.mixins import Looper
 from scaler.worker.agent.mixins import HeartbeatManager, ProcessorManager, TaskManager, TimeoutManager
 from scaler.worker.agent.processor_holder import ProcessorHolder
@@ -60,8 +61,7 @@ class VanillaHeartbeatManager(Looper, HeartbeatManager):
 
         if self._object_storage_address is None:
             address_message = heartbeat.objectStorageAddress
-            # scheme is empty when talking to a scheduler that predates this field; fall back to tcp
-            scheme = SocketType(address_message.scheme) if address_message.scheme else SocketType.tcp
+            scheme = SocketType(address_message.scheme)
             self._object_storage_address = AddressConfig(scheme, address_message.host, address_message.port)
             await self._connector_storage.connect(self._object_storage_address)
 
@@ -92,7 +92,7 @@ class VanillaHeartbeatManager(Looper, HeartbeatManager):
                 latencyUS=self._latency_us,
                 taskLock=self._processor_manager.can_accept_task(),
                 processors=[self.__get_processor_status_from_holder(processor) for processor in processors],
-                capabilities=self._capabilities,
+                capabilities=dict_to_capabilities(self._capabilities),
                 workerManagerID=self._worker_manager_id,
             )
         )

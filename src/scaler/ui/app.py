@@ -322,7 +322,7 @@ class TaskStreamState:
             "pattern": pattern,
             "outline_color": outline_color,
             "outline_width": outline_width,
-            "hover": f"{func} ({duration:.2f}s) - {task_state._as_str()}",
+            "hover": f"{func} ({duration:.2f}s) - {task_state.name}",
         }
 
         self._bar_history.setdefault(worker, []).append(bar)
@@ -871,7 +871,7 @@ class WebUIApp:
             self._worker_processors.pop(w, None)
             self._worker_manager_map.pop(w, None)
             self._task_stream.handle_worker_state(
-                StateWorker(workerId=WorkerID(w.encode()), state=WorkerState.disconnected, capabilities={})
+                StateWorker(workerId=WorkerID(w.encode()), state=WorkerState.disconnected, capabilities=[])
             )
 
         # Aggregate summary stats from workers into each worker manager entry
@@ -905,7 +905,9 @@ class WebUIApp:
         state = state_worker.state
 
         if state == WorkerState.connected:
-            self._worker_capabilities[worker_id] = state_worker.capabilities
+            # Store capabilities as a {name: value} dict so downstream consumers
+            # (e.g. _process_scheduler -> _display_capabilities) can call .keys() on them.
+            self._worker_capabilities[worker_id] = capabilities_to_dict(state_worker.capabilities)
         elif state == WorkerState.disconnected:
             self._workers_data.pop(worker_id, None)
             self._worker_capabilities.pop(worker_id, None)
@@ -915,7 +917,7 @@ class WebUIApp:
 
         return {
             "worker_id": worker_id,
-            "state": state._as_str(),
+            "state": state.name,
             "capabilities": list(capabilities_to_dict(state_worker.capabilities).keys()),
         }
 
@@ -972,7 +974,7 @@ class WebUIApp:
                 "time": submitted_time,
                 "duration": duration_str,
                 "peak_mem": peak_mem_str,
-                "status": state_task.state._as_str(),
+                "status": state_task.state.name,
                 "capabilities": caps_str,
             }
             self._task_log.appendleft(entry)
@@ -994,7 +996,7 @@ class WebUIApp:
                 "time": submitted_time,
                 "duration": "",
                 "peak_mem": "",
-                "status": state_task.state._as_str(),
+                "status": state_task.state.name,
                 "capabilities": caps_str,
             }
             self._active_tasks[task_id_hex] = entry
@@ -1111,6 +1113,7 @@ class WebUIApp:
             "scheduler": sched,
             "workers": list(self._workers_data.values()),
             "task_log": initial_task_log,
+            "task_log_max_size": TASK_LOG_MAX_SIZE,
             "task_stream": stream_data,
             "memory_chart": memory_data,
             "processors": self._build_processors_data(),

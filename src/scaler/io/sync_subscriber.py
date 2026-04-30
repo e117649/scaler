@@ -57,7 +57,9 @@ class ZMQSyncSubscriber(SyncSubscriber):
             timeout_milliseconds = int(self._timeout.total_seconds() * 1000)
             self._socket.setsockopt(zmq.RCVTIMEO, timeout_milliseconds)
 
-        self._socket.subscribe(self._identity)
+        # Subscribe to all messages: ZMQAsyncPublisher / YMQAsyncPublisher send payloads
+        # without a topic prefix, so the subscription filter must be empty to match.
+        self._socket.subscribe(b"")
         self._socket.connect(repr(self._address))
 
     def __routine_polling(self):

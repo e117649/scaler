@@ -9,6 +9,7 @@ from scaler.protocol.capnp import (
     WorkerManagerCommandType,
     WorkerManagerHeartbeat,
 )
+from scaler.protocol.helpers import dict_to_capabilities
 from scaler.scheduler.controllers.policies.simple_policy.scaling.mixins import ScalingPolicy
 from scaler.scheduler.controllers.policies.simple_policy.scaling.types import WorkerManagerSnapshot
 from scaler.scheduler.controllers.worker_manager_utilties import build_scaling_manager_status, build_set_desired_command
@@ -207,7 +208,7 @@ class CapabilityScalingPolicy(ScalingPolicy):
 
         return [
             WorkerManagerCommand(
-                workerIDs=shutdown_ids, command=WorkerManagerCommandType.shutdownWorkers, capabilities={}
+                workerIDs=shutdown_ids, command=WorkerManagerCommandType.shutdownWorkers, capabilities=[]
             )
         ]
 
@@ -240,7 +241,9 @@ class CapabilityScalingPolicy(ScalingPolicy):
 
         logging.info(f"Requesting worker with capabilities: {capability_dict!r}")
         return WorkerManagerCommand(
-            workerIDs=[], command=WorkerManagerCommandType.startWorkers, capabilities=capability_dict
+            workerIDs=[],
+            command=WorkerManagerCommandType.startWorkers,
+            capabilities=dict_to_capabilities(capability_dict),
         )
 
     def _compute_desired_per_capset(

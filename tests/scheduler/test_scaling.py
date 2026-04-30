@@ -185,7 +185,7 @@ class TestCapabilityScalingPolicy(unittest.TestCase):
         imperative = _imperative(commands)
         self.assertEqual(len(imperative), 1)
         self.assertEqual(imperative[0].command, WorkerManagerCommandType.startWorkers)
-        self.assertEqual(imperative[0].capabilities, {"gpu": 1})
+        self.assertEqual(capabilities_to_dict(imperative[0].capabilities), {"gpu": 1})
 
     def test_no_scale_when_capable_workers_exist(self):
         """Test that no worker is started when workers with matching capabilities exist."""
@@ -234,7 +234,7 @@ class TestCapabilityScalingPolicy(unittest.TestCase):
         imperative = _imperative(commands)
         self.assertEqual(len(imperative), 1)
         self.assertEqual(imperative[0].command, WorkerManagerCommandType.startWorkers)
-        self.assertEqual(imperative[0].capabilities, {"gpu": 1})
+        self.assertEqual(capabilities_to_dict(imperative[0].capabilities), {"gpu": 1})
 
     def test_different_capability_sets_handled_separately(self):
         """Test that tasks with different capabilities trigger separate scaling suggestions."""
@@ -259,7 +259,7 @@ class TestCapabilityScalingPolicy(unittest.TestCase):
         start_commands = [c for c in commands if c.command == WorkerManagerCommandType.startWorkers]
         self.assertEqual(len(start_commands), 2)
 
-        capabilities_requested = {frozenset(c.capabilities.keys()) for c in start_commands}
+        capabilities_requested = {frozenset(capabilities_to_dict(c.capabilities).keys()) for c in start_commands}
         self.assertIn(frozenset({"gpu"}), capabilities_requested)
         self.assertIn(frozenset({"tpu"}), capabilities_requested)
 
@@ -307,7 +307,7 @@ class TestCapabilityScalingPolicy(unittest.TestCase):
         imperative = _imperative(commands)
         self.assertEqual(len(imperative), 1)
         self.assertEqual(imperative[0].command, WorkerManagerCommandType.startWorkers)
-        self.assertEqual(imperative[0].capabilities, {})
+        self.assertEqual(capabilities_to_dict(imperative[0].capabilities), {})
 
     def test_get_status_returns_scaling_manager_status(self):
         """Test that get_status returns a ScalingManagerStatus object."""
@@ -338,7 +338,7 @@ class TestCapabilityScalingPolicy(unittest.TestCase):
         imperative1 = _imperative(commands1)
         self.assertEqual(len(imperative1), 1)
         self.assertEqual(imperative1[0].command, WorkerManagerCommandType.startWorkers)
-        self.assertEqual(imperative1[0].capabilities, {"mqa": 1})
+        self.assertEqual(capabilities_to_dict(imperative1[0].capabilities), {"mqa": 1})
 
         # Simulate state update as if manager responded successfully
         updated_worker_ids = [WorkerID(b"w-mqa")]
@@ -435,7 +435,7 @@ class TestCapabilityScalingPolicy(unittest.TestCase):
 
         start_cmds = [c for c in commands if c.command == WorkerManagerCommandType.startWorkers]
         self.assertEqual(len(start_cmds), 1)
-        self.assertEqual(start_cmds[0].capabilities, {"gpu": 1})
+        self.assertEqual(capabilities_to_dict(start_cmds[0].capabilities), {"gpu": 1})
 
 
 class TestVanillaScalingPolicy(unittest.TestCase):

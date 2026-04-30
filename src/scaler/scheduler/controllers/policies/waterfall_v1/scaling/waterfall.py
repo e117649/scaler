@@ -8,6 +8,7 @@ from scaler.protocol.capnp import (
     WorkerManagerCommandType,
     WorkerManagerHeartbeat,
 )
+from scaler.protocol.helpers import dict_to_capabilities
 from scaler.scheduler.controllers.policies.simple_policy.scaling.mixins import ScalingPolicy
 from scaler.scheduler.controllers.policies.simple_policy.scaling.types import WorkerManagerSnapshot
 from scaler.scheduler.controllers.policies.waterfall_v1.scaling.types import WaterfallRule
@@ -180,7 +181,9 @@ class WaterfallScalingPolicy(ScalingPolicy):
                 if len(managed_worker_ids) >= local_capacity:
                     return None
                 return WorkerManagerCommand(
-                    workerIDs=[], command=WorkerManagerCommandType.startWorkers, capabilities=capability_dict
+                    workerIDs=[],
+                    command=WorkerManagerCommandType.startWorkers,
+                    capabilities=dict_to_capabilities(capability_dict),
                 )
             else:
                 # A higher-priority capable manager should handle it
@@ -214,7 +217,7 @@ class WaterfallScalingPolicy(ScalingPolicy):
         if len(managed_worker_ids) >= effective_capacity:
             return []
 
-        return [WorkerManagerCommand(workerIDs=[], command=WorkerManagerCommandType.startWorkers, capabilities={})]
+        return [WorkerManagerCommand(workerIDs=[], command=WorkerManagerCommandType.startWorkers, capabilities=[])]
 
     def _create_shutdown_commands(
         self,
@@ -267,7 +270,7 @@ class WaterfallScalingPolicy(ScalingPolicy):
         shutdown_ids = [bytes(wid) for wid, _ in workers_with_load[:to_shutdown]]
         return [
             WorkerManagerCommand(
-                workerIDs=shutdown_ids, command=WorkerManagerCommandType.shutdownWorkers, capabilities={}
+                workerIDs=shutdown_ids, command=WorkerManagerCommandType.shutdownWorkers, capabilities=[]
             )
         ]
 

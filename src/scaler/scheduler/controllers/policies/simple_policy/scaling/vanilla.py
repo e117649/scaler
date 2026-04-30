@@ -64,7 +64,7 @@ class VanillaScalingPolicy(ScalingPolicy):
         max_concurrency = worker_manager_heartbeat.maxTaskConcurrency
         if max_concurrency != -1 and len(managed_worker_ids) + pending_worker_count >= max_concurrency:
             return []
-        return [WorkerManagerCommand(workerIDs=[], command=WorkerManagerCommandType.startWorkers, capabilities={})]
+        return [WorkerManagerCommand(workerIDs=[], command=WorkerManagerCommandType.startWorkers, capabilities=[])]
 
     def _create_shutdown_commands(
         self, information_snapshot: InformationSnapshot, managed_worker_ids: List[WorkerID]
@@ -94,7 +94,7 @@ class VanillaScalingPolicy(ScalingPolicy):
         shutdown_ids = [bytes(wid) for wid, _ in workers_with_load[:to_shutdown]]
         return [
             WorkerManagerCommand(
-                workerIDs=shutdown_ids, command=WorkerManagerCommandType.shutdownWorkers, capabilities={}
+                workerIDs=shutdown_ids, command=WorkerManagerCommandType.shutdownWorkers, capabilities=[]
             )
         ]
 

@@ -18,6 +18,7 @@ from scaler.config.types.address import AddressConfig
 from scaler.io.mixins import NetworkBackend, SyncConnector, SyncObjectStorageConnector
 from scaler.io.network_backends import get_network_backend_from_env
 from scaler.protocol.capnp import ClientDisconnect, ClientShutdownResponse, GraphTask, Task
+from scaler.protocol.helpers import dict_to_capabilities
 from scaler.utility.exceptions import ClientQuitException, MissingObjects
 from scaler.utility.graph.optimization import cull_graph
 from scaler.utility.graph.topological_sorter import TopologicalSorter
@@ -378,7 +379,7 @@ class Client:
                     metadata=b"",
                     funcObjectId=b"",
                     functionArgs=[],
-                    capabilities=capabilities,
+                    capabilities=dict_to_capabilities(capabilities),
                 ),
                 is_delayed=not block,
                 group_task_id=graph_task.taskId,
@@ -519,7 +520,7 @@ class Client:
             functionArgs=[
                 Task.Argument(type=Task.Argument.ArgumentType.objectID, data=argument) for argument in function_args
             ],
-            capabilities=capabilities,
+            capabilities=dict_to_capabilities(capabilities),
         )
 
         future = self._future_factory(task=task, is_delayed=delayed, group_task_id=None)
@@ -645,7 +646,7 @@ class Client:
                     )
                     for argument in arguments
                 ],
-                capabilities=capabilities,
+                capabilities=dict_to_capabilities(capabilities),
             )
 
         result_task_ids = [node_name_to_task_id[key] for key in keys if key in call_graph]
@@ -670,7 +671,7 @@ class Client:
                         metadata=b"",
                         funcObjectId=b"",
                         functionArgs=[],
-                        capabilities={},
+                        capabilities=[],
                     ),
                     is_delayed=False,
                     group_task_id=graph_task_id,

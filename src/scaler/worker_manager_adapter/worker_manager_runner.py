@@ -16,6 +16,7 @@ from scaler.protocol.capnp import (
     WorkerManagerHeartbeat,
     WorkerManagerHeartbeatEcho,
 )
+from scaler.protocol.helpers import dict_to_capabilities
 from scaler.utility.event_loop import create_async_loop_routine, run_task_forever
 from scaler.utility.identifiers import WorkerID
 from scaler.worker_manager_adapter.mixins import DeclarativeWorkerProvisioner, ImperativeWorkerProvisioner
@@ -87,7 +88,7 @@ class WorkerManagerRunner:
         await self._connector_external.send(
             WorkerManagerHeartbeat(
                 maxTaskConcurrency=self._max_provisioner_units * self._workers_per_provisioner_unit,
-                capabilities=self._capabilities,
+                capabilities=dict_to_capabilities(self._capabilities),
                 workerManagerID=self._worker_manager_id,
             )
         )
@@ -161,6 +162,9 @@ class WorkerManagerRunner:
 
         await self._connector_external.send(
             WorkerManagerCommandResponse(
-                command=cmd_type, status=response_status, workerIDs=worker_ids, capabilities=capabilities
+                command=cmd_type,
+                status=response_status,
+                workerIDs=worker_ids,
+                capabilities=dict_to_capabilities(capabilities),
             )
         )

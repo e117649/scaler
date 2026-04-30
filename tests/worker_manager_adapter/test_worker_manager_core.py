@@ -15,6 +15,7 @@ from scaler.protocol.capnp import (
     WorkerManagerCommandResponse,
     WorkerManagerCommandType,
 )
+from scaler.protocol.helpers import capabilities_to_dict
 from scaler.utility.exceptions import ClientShutdownException
 from scaler.utility.identifiers import ClientID, ObjectID, TaskID, WorkerID
 from scaler.utility.logging.utility import setup_logger
@@ -66,7 +67,7 @@ class TestWorkerManagerHandleCommand(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(response, WorkerManagerCommandResponse)
         self.assertEqual(response.status, Status.success)
         self.assertEqual(list(response.workerIDs), [worker_id])
-        self.assertEqual(dict(response.capabilities), self.capabilities)
+        self.assertEqual(capabilities_to_dict(response.capabilities), self.capabilities)
 
     async def test_start_workers_failure_returns_empty_capabilities_and_ids(self) -> None:
         self.provisioner.start_worker.return_value = ([], Status.tooManyWorkers)
