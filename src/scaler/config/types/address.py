@@ -80,15 +80,15 @@ class AddressConfig(ConfigType):
         raise ValueError(f"Unsupported socket type: {socket_type}")
 
     def __repr__(self) -> str:
-        if self.type in {SocketType.tcp, SocketType.ws, SocketType.wss}:
+        if self.type == SocketType.tcp:
             return f"{self.type.value}://{self.host}:{self.port}"
-
-        if self.type in _TYPES_WITHOUT_PORT:
-            return f"{self.type.value}://{self.host}"
 
         if self.type in {SocketType.ws, SocketType.wss}:
             path = self.path if self.path is not None else "/"
             return f"{self.type.value}://{self.host}:{self.port}{path}"
+
+        if self.type in _TYPES_WITHOUT_PORT:
+            return f"{self.type.value}://{self.host}"
 
         raise TypeError(f"Unsupported socket type: {self.type}")
 
