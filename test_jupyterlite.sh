@@ -14,19 +14,15 @@
 # the wasm client.
 #
 # Prerequisites:
-#   - .venv is set up (uv pip install -e ".[all]")
+#   - .venv is set up (uv pip install -e ".[all]" and dev deps: uv sync --group dev)
 #   - wasm wheel has been built and deployed:
-#       # Activate emsdk + pyodide-build (clone + install + activate via library_tool.sh):
-#       ./scripts/library_tool.sh emsdk download
-#       ./scripts/library_tool.sh emsdk compile
-#       ./scripts/library_tool.sh emsdk install
-#       ./scripts/library_tool.sh pyodide download
-#       ./scripts/library_tool.sh pyodide compile
-#       ./scripts/library_tool.sh pyodide install
-#       source thirdparties/emsdk/emsdk_env.sh
-#       source thirdparties/pyodide-venv/bin/activate
-#       export CapnProto_DIR=$PWD/thirdparties/wasm/install/lib/cmake/CapnProto
-#       export CMAKE_PREFIX_PATH=$PWD/thirdparties/wasm/install
+#       # Activate emsdk (already baked into devcontainer or install via library_tool.sh):
+#       source thirdparties/emsdk/emsdk_env.sh  # or /opt/scaler/emsdk/emsdk_env.sh in devcontainer
+#       source .venv/bin/activate
+#       # Install xbuildenv (one-time; cached in ~/.pyodide-build or project dir):
+#       pyodide xbuildenv install 0.29.3
+#       export CapnProto_DIR=$PWD/thirdparties/wasm/install/lib/cmake/CapnProto  # or /opt/scaler/wasm/install/... in devcontainer
+#       export CMAKE_PREFIX_PATH=$PWD/thirdparties/wasm/install                  # or /opt/scaler/wasm/install in devcontainer
 #       pyodide build . --outdir dist_wasm
 #       # pyodide-build 0.34.x repacks with pyemscripten_2025_0 tag; retag back
 #       # to emscripten_4_0_9 for Pyodide 0.29.3's micropip:

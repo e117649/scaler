@@ -5,7 +5,7 @@ inputs:
   emsdk-version:
     description: "Emscripten SDK version (must match setup-wasm-env). Used in the wasm-libs cache key so toolchain bumps invalidate stale builds."
     required: false
-    default: "3.1.58"
+    default: "4.0.9"
 
 runs:
   using: "composite"

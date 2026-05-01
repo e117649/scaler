@@ -12,7 +12,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
 # related goes under /opt/scaler/ so it survives the workspace bind mount that
 # would otherwise shadow ./thirdparties/. THIRD_PARTY_DIR redirects
 # library_tool.sh's working tree (downloaded tarballs + build trees + emsdk +
-# pyodide venv + wasm install prefix) under /opt/scaler.
+# wasm install prefix) under /opt/scaler.
 ENV THIRD_PARTY_DIR=/opt/scaler
 COPY scripts /tmp/scaler-scripts
 RUN /tmp/scaler-scripts/library_tool.sh boost download \
@@ -27,10 +27,6 @@ RUN /tmp/scaler-scripts/library_tool.sh boost download \
     && /tmp/scaler-scripts/library_tool.sh emsdk download \
     && /tmp/scaler-scripts/library_tool.sh emsdk compile \
     && /tmp/scaler-scripts/library_tool.sh emsdk install \
-    && /tmp/scaler-scripts/library_tool.sh pyodide download \
-    && /tmp/scaler-scripts/library_tool.sh pyodide compile \
-    && /tmp/scaler-scripts/library_tool.sh pyodide install \
-    && . /opt/scaler/emsdk/emsdk_env.sh \
     && /tmp/scaler-scripts/library_tool.sh capnp compile --target=wasm \
     && /tmp/scaler-scripts/library_tool.sh capnp install --target=wasm \
     && /tmp/scaler-scripts/library_tool.sh libuv compile --target=wasm \

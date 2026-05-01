@@ -34,15 +34,5 @@
                 "cmake.configureOnOpen": false
             }
         }
-    },
-    // The wasm chain (emsdk, pyodide-build, wasm-target capnp/libuv) is baked
-    // into /opt/scaler/ in the image. emsdk paths (EMSDK / emcc / emcmake /
-    // bundled node) are exported by /etc/profile.d/emsdk.sh in the image; the
-    // remaining vars wire pyodide-build's venv and the wasm capnp/libuv
-    // install prefix into PATH and cmake the same way CI does.
-    "containerEnv": {
-        "PATH": "/opt/scaler/pyodide-venv/bin:${containerEnv:PATH}",
-        "CapnProto_DIR": "/opt/scaler/wasm/install/lib/cmake/CapnProto",
-        "CMAKE_PREFIX_PATH": "/opt/scaler/wasm/install"
     }
 }

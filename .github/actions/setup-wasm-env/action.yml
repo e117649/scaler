@@ -1,10 +1,10 @@
 name: "Setup WASM Build Environment"
 description: "Install host capnp, pyodide-build and a pinned Emscripten SDK"
 
-# All wasm toolchain versions (emsdk, pyodide-build, pyodide xbuildenv) are
-# pinned in scripts/library_tool.sh. They must stay in lockstep with the
-# Pyodide kernel that ships in jupyterlite-pyodide-kernel (see
-# docs/requirements_docs.txt):
+# pyodide-build is pinned in pyproject.toml [dependency-groups] dev.
+# The emsdk version is pinned in scripts/library_tool.sh (EMSDK_VERSION).
+# They must stay in lockstep with the Pyodide kernel that ships in
+# jupyterlite-pyodide-kernel (see docs/requirements_docs.txt):
 #   pyodide-build 0.34.3 -> Pyodide 0.29.3 -> Emscripten 4.0.9 -> CPython 3.13
 # See https://pyodide.org/en/stable/development/building-and-testing-packages.html
 inputs:
@@ -36,12 +36,16 @@ runs:
     - name: Install pyodide-build
       shell: bash
       run: |
-        # Versions are pinned in scripts/library_tool.sh
-        # (PYODIDE_BUILD_VERSION / PYODIDE_XBUILDENV_VERSION).
-        ./scripts/library_tool.sh pyodide download
-        ./scripts/library_tool.sh pyodide compile
-        ./scripts/library_tool.sh pyodide install
-        echo "${GITHUB_WORKSPACE}/thirdparties/pyodide-venv/bin" >> "${GITHUB_PATH}"
+        # Version is pinned in pyproject.toml [dependency-groups] dev.
+        # The matching xbuildenv (Pyodide sysroot / lockfile) is installed
+        # without an explicit version so pyodide-build selects the right one.
+        pip install "$(python3 -c "
+import tomllib
+with open('pyproject.toml', 'rb') as f:
+    data = tomllib.load(f)
+print(next(d for d in data['dependency-groups']['dev'] if d.startswith('pyodide-build')))
+")"
+        pyodide xbuildenv install
 
     - name: Cache Emscripten SDK
       id: cache-emsdk

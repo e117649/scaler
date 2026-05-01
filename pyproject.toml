@@ -69,6 +69,7 @@ dev = [
     "flake8>=5.0.4",
     "flake8-pyproject>=1.2.3",
     "mypy>=1.14.1",
+    "pyodide-build==0.34.3; python_version >= '3.12'",
     "sphinx>=7.1.2",
     "websockets>=12.0",
 ]
