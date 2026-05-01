@@ -16,6 +16,9 @@ namespace scaler {
 namespace ymq {
 namespace internal {
 
+struct ClientUpgradeContext;
+struct ServerUpgradeContext;
+
 // Manages the WebSocket protocol over an established TCP connection.
 //
 // Handles the RFC 6455 HTTP/1.1 Upgrade handshake and binary frame framing/deframing.
@@ -46,11 +49,6 @@ public:
     WebSocketStream(WebSocketStream&&) noexcept            = default;
     WebSocketStream& operator=(WebSocketStream&&) noexcept = default;
 
-    // Create a ready-to-use WebSocketStream from an already-upgraded TCP socket.
-    // Used internally by the upgrade helpers; not part of the public transport API.
-    static WebSocketStream fromUpgradedSocket(
-        scaler::wrapper::uv::TCPSocket socket, bool isServer, std::vector<uint8_t> leftover = {}) noexcept;
-
     // The buffers' content must remain valid until the callback is called.
     std::expected<void, scaler::wrapper::uv::Error> write(
         std::span<const std::span<const uint8_t>> buffers, scaler::wrapper::uv::WriteCallback callback) noexcept;
@@ -64,6 +62,12 @@ public:
     std::expected<void, scaler::wrapper::uv::Error> closeReset() noexcept;
 
 private:
+    static WebSocketStream fromUpgradedSocket(
+        scaler::wrapper::uv::TCPSocket socket, bool isServer, std::vector<uint8_t> leftover = {}) noexcept;
+
+    static void finishClientUpgrade(std::shared_ptr<ClientUpgradeContext> ctx) noexcept;
+    static void finishServerUpgrade(std::shared_ptr<ServerUpgradeContext> ctx) noexcept;
+
     struct State {
         scaler::wrapper::uv::TCPSocket _socket;
         bool _isServer;

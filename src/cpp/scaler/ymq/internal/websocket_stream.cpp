@@ -248,7 +248,7 @@ WebSocketStream WebSocketStream::fromUpgradedSocket(
 }
 
 // Called when a complete HTTP response has been assembled in the client upgrade context.
-static void finishClientUpgrade(std::shared_ptr<ClientUpgradeContext> ctx) noexcept
+void WebSocketStream::finishClientUpgrade(std::shared_ptr<ClientUpgradeContext> ctx) noexcept
 {
     ctx->socket->readStop();
 
@@ -278,12 +278,11 @@ static void finishClientUpgrade(std::shared_ptr<ClientUpgradeContext> ctx) noexc
     std::vector<uint8_t> leftover(
         ctx->recvBuffer.begin() + static_cast<std::ptrdiff_t>(headersEnd + 4), ctx->recvBuffer.end());
 
-    ctx->callback(
-        WebSocketStream::fromUpgradedSocket(std::move(ctx->socket.value()), false /* client */, std::move(leftover)));
+    ctx->callback(fromUpgradedSocket(std::move(ctx->socket.value()), false, std::move(leftover)));
 }
 
 // Called when a complete HTTP request has been assembled in the server upgrade context.
-static void finishServerUpgrade(std::shared_ptr<ServerUpgradeContext> ctx) noexcept
+void WebSocketStream::finishServerUpgrade(std::shared_ptr<ServerUpgradeContext> ctx) noexcept
 {
     ctx->socket->readStop();
 
@@ -352,7 +351,7 @@ static void finishServerUpgrade(std::shared_ptr<ServerUpgradeContext> ctx) noexc
             }
 
             // Any data that arrived before the response write isn't expected but preserve it.
-            ctx->callback(WebSocketStream::fromUpgradedSocket(std::move(ctx->socket.value()), true /* server */));
+            ctx->callback(fromUpgradedSocket(std::move(ctx->socket.value()), true));
         });
 
     if (!writeResult.has_value()) {
