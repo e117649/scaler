@@ -2,15 +2,19 @@
 # This script builds and installs the required 3rd party C++ libraries.
 #
 # Usage:
-#       ./scripts/library_tool.sh [boost|capnp|libuv|emsdk] [download|compile|install] [--prefix=PREFIX] [--target=native|wasm]
+#       ./scripts/library_tool.sh [boost|capnp|libuv|emsdk|pyodide] [download|compile|install] [--prefix=PREFIX] [--target=native|wasm]
 #
 # --target=wasm cross-compiles capnp/libuv against the Emscripten toolchain.
 # It expects emcc/emcmake on PATH (source thirdparties/emsdk/emsdk_env.sh first)
 # and that the host `capnp` tool is already installed (capnp code generation
 # can't run inside wasm). Output defaults to ./thirdparties/wasm/install.
 #
-# emsdk is always installed at ./thirdparties/emsdk (its tooling references its
-# own location); --prefix and --target are ignored for that library.
+# emsdk is always installed at $THIRD_PARTY_DIR/emsdk and pyodide-build at
+# $THIRD_PARTY_DIR/pyodide-venv; --prefix and --target are ignored for both.
+#
+# Override the install root with the THIRD_PARTY_DIR env var (default
+# ./thirdparties); the devcontainer image bakes things into /opt/scaler so the
+# workspace bind mount doesn't shadow them.
 
 # Remember:
 #       Update the usage string when you add/remove a dependency or target.
@@ -19,11 +23,15 @@
 BOOST_VERSION="1.88.0"
 CAPNP_VERSION="1.1.0"
 UV_VERSION="1.51.0"
-# emsdk version must match the Pyodide xbuildenv pinned in
-# .github/actions/setup-wasm-env/action.yml (currently 4.0.9 -> Pyodide 0.29.3).
+# The emsdk / pyodide-build / pyodide-xbuildenv versions move together; they
+# must match the Pyodide kernel that ships in jupyterlite-pyodide-kernel
+# (see docs/requirements_docs.txt):
+#   pyodide-build 0.34.3 -> xbuildenv 0.29.3 -> Emscripten 4.0.9 -> CPython 3.13
 EMSDK_VERSION="4.0.9"
+PYODIDE_BUILD_VERSION="0.34.3"
+PYODIDE_XBUILDENV_VERSION="0.29.3"
 
-THIRD_PARTY_DIRECTORY="./thirdparties"
+THIRD_PARTY_DIRECTORY="${THIRD_PARTY_DIR:-./thirdparties}"
 PATCHES_DIRECTORY="./scripts/patches"
 
 THIRD_PARTY_DOWNLOADED="${THIRD_PARTY_DIRECTORY}/downloaded"
@@ -68,7 +76,7 @@ fi
 PREFIX=$(mkdir -p "${PREFIX}" && cd "${PREFIX}" && pwd)
 
 show_help() {
-    echo "Usage: ./library_tool.sh [boost|capnp|libuv|emsdk] [download|compile|install] [--prefix=DIR] [--target=native|wasm]"
+    echo "Usage: ./library_tool.sh [boost|capnp|libuv|emsdk|pyodide] [download|compile|install] [--prefix=DIR] [--target=native|wasm]"
     exit 1
 }
 
@@ -269,6 +277,46 @@ elif [ "$1" == "emsdk" ]; then
         fi
         "${EMSDK_DIRECTORY}/emsdk" activate "${EMSDK_VERSION}"
         echo "Installed (activated) emsdk ${EMSDK_VERSION}; source ${EMSDK_DIRECTORY}/emsdk_env.sh to use it."
+
+    else
+        show_help
+    fi
+elif [ "$1" == "pyodide" ]; then
+    # pyodide-build is a host-Python tool that drives the wasm wheel build. It
+    # lives in a dedicated venv at ./thirdparties/pyodide-venv so it doesn't
+    # collide with the project's main .venv. --prefix / --target are ignored.
+    PYODIDE_VENV_DIRECTORY="${THIRD_PARTY_DIRECTORY}/pyodide-venv"
+
+    if [ "$2" == "download" ]; then
+        # download = create the venv and install pyodide-build into it. The
+        # actual xbuildenv (compiler / sysroot / lockfile) is fetched in the
+        # compile step.
+        if [[ ! -x "${PYODIDE_VENV_DIRECTORY}/bin/python3" ]]; then
+            mkdir -p "${THIRD_PARTY_DIRECTORY}"
+            python3 -m venv "${PYODIDE_VENV_DIRECTORY}"
+        fi
+        # shellcheck disable=SC1091
+        source "${PYODIDE_VENV_DIRECTORY}/bin/activate"
+        python3 -m pip install --upgrade pip
+        python3 -m pip install "pyodide-build==${PYODIDE_BUILD_VERSION}"
+        deactivate
+        echo "Downloaded pyodide-build ${PYODIDE_BUILD_VERSION} into ${PYODIDE_VENV_DIRECTORY}"
+
+    elif [ "$2" == "compile" ]; then
+        if [[ ! -x "${PYODIDE_VENV_DIRECTORY}/bin/pyodide" ]]; then
+            echo "pyodide-build not downloaded; run './scripts/library_tool.sh pyodide download' first."
+            exit 1
+        fi
+        # shellcheck disable=SC1091
+        source "${PYODIDE_VENV_DIRECTORY}/bin/activate"
+        # xbuildenv = matching CPython, Emscripten sysroot and Pyodide lockfile.
+        pyodide xbuildenv install "${PYODIDE_XBUILDENV_VERSION}"
+        deactivate
+        echo "Compiled (downloaded xbuildenv ${PYODIDE_XBUILDENV_VERSION}) for pyodide-build"
+
+    elif [ "$2" == "install" ]; then
+        # Nothing to copy out -- pyodide-build is used in-place from its venv.
+        echo "pyodide-build is used in-place from ${PYODIDE_VENV_DIRECTORY}; activate it with 'source ${PYODIDE_VENV_DIRECTORY}/bin/activate'."
 
     else
         show_help

@@ -1,21 +1,13 @@
 name: "Setup WASM Build Environment"
 description: "Install host capnp, pyodide-build and a pinned Emscripten SDK"
 
-# These versions must stay in lockstep with the Pyodide kernel that ships in
-# jupyterlite-pyodide-kernel (see docs/requirements_docs.txt):
+# All wasm toolchain versions (emsdk, pyodide-build, pyodide xbuildenv) are
+# pinned in scripts/library_tool.sh. They must stay in lockstep with the
+# Pyodide kernel that ships in jupyterlite-pyodide-kernel (see
+# docs/requirements_docs.txt):
 #   pyodide-build 0.34.3 -> Pyodide 0.29.3 -> Emscripten 4.0.9 -> CPython 3.13
 # See https://pyodide.org/en/stable/development/building-and-testing-packages.html
-#
-# Emscripten SDK version is pinned in scripts/library_tool.sh (EMSDK_VERSION).
 inputs:
-  pyodide-build-version:
-    description: "pyodide-build version"
-    required: false
-    default: "0.34.3"
-  pyodide-xbuildenv-version:
-    description: "Pyodide xbuildenv version (matches the JupyterLite kernel)"
-    required: false
-    default: "0.29.3"
   python-version:
     description: "Host Python used to run pyodide-build"
     required: false
@@ -44,15 +36,12 @@ runs:
     - name: Install pyodide-build
       shell: bash
       run: |
-        python3 -m venv "${RUNNER_TEMP}/pyodide-venv"
-        # shellcheck disable=SC1091
-        source "${RUNNER_TEMP}/pyodide-venv/bin/activate"
-        python3 -m pip install --upgrade pip
-        python3 -m pip install "pyodide-build==${{ inputs.pyodide-build-version }}"
-        # Install the cross-build environment that matches the JupyterLite
-        # kernel's bundled Pyodide (Python + Emscripten + lockfile).
-        pyodide xbuildenv install "${{ inputs.pyodide-xbuildenv-version }}"
-        echo "${RUNNER_TEMP}/pyodide-venv/bin" >> "${GITHUB_PATH}"
+        # Versions are pinned in scripts/library_tool.sh
+        # (PYODIDE_BUILD_VERSION / PYODIDE_XBUILDENV_VERSION).
+        ./scripts/library_tool.sh pyodide download
+        ./scripts/library_tool.sh pyodide compile
+        ./scripts/library_tool.sh pyodide install
+        echo "${GITHUB_WORKSPACE}/thirdparties/pyodide-venv/bin" >> "${GITHUB_PATH}"
 
     - name: Cache Emscripten SDK
       id: cache-emsdk

@@ -16,14 +16,18 @@
 # Prerequisites:
 #   - .venv is set up (uv pip install -e ".[all]")
 #   - wasm wheel has been built and deployed:
-#       # Activate emsdk (clone + install + activate via library_tool.sh):
+#       # Activate emsdk + pyodide-build (clone + install + activate via library_tool.sh):
 #       ./scripts/library_tool.sh emsdk download
 #       ./scripts/library_tool.sh emsdk compile
 #       ./scripts/library_tool.sh emsdk install
+#       ./scripts/library_tool.sh pyodide download
+#       ./scripts/library_tool.sh pyodide compile
+#       ./scripts/library_tool.sh pyodide install
 #       source thirdparties/emsdk/emsdk_env.sh
+#       source thirdparties/pyodide-venv/bin/activate
 #       export CapnProto_DIR=$PWD/thirdparties/wasm/install/lib/cmake/CapnProto
 #       export CMAKE_PREFIX_PATH=$PWD/thirdparties/wasm/install
-#       /tmp/pyodide-venv-new/bin/pyodide build . --outdir dist_wasm
+#       pyodide build . --outdir dist_wasm
 #       # pyodide-build 0.34.x repacks with pyemscripten_2025_0 tag; retag back
 #       # to emscripten_4_0_9 for Pyodide 0.29.3's micropip:
 #       uv pip install wheel && \
