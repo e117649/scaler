@@ -30,8 +30,6 @@ OwnedPyObject<> build_schema_descriptor(capnp::Schema schema)
     const char* kind = proto.isEnum() ? KIND_ENUM : KIND_STRUCT;
     PyDict_SetItemString(descriptor.get(), "kind", OwnedPyObject<>(PyUnicode_FromString(kind)).get());
     auto unqualified = schema.getUnqualifiedName();
-    auto display     = proto.getDisplayName();
-    auto prefix_len  = proto.getDisplayNamePrefixLength();
     PyDict_SetItemString(descriptor.get(), "name", OwnedPyObject<>(PyUnicode_FromString(unqualified.cStr())).get());
     PyDict_SetItemString(descriptor.get(), "id", OwnedPyObject<>(PyLong_FromUnsignedLongLong(proto.getId())).get());
 
@@ -533,15 +531,18 @@ bool initialize_runtime_modules(PyObject* module)
     PyModule_AddObjectRef(base_module.get(), ATTR_CAPNP_UNION_STRUCT, capnp_union_struct_type.get());
     PyModule_AddObjectRef(module, ATTR_BASE_MESSAGE, capnp_struct_type.get());
 
-    static const char MOD_COMMON[]         = "common";
-    static const char MOD_STATUS[]         = "status";
-    static const char MOD_OBJECT_STORAGE[] = "object_storage";
-    static const char MOD_MESSAGE[]        = "message";
+    // Use lowercase-prefixed identifiers (not MOD_*) to avoid colliding with
+    // platform/system macros (e.g. some Linux/Python headers preprocess
+    // ``MOD_STATUS`` into a numeric constant, breaking the build).
+    static const char kModCommon[]        = "common";
+    static const char kModStatus[]        = "status";
+    static const char kModObjectStorage[] = "object_storage";
+    static const char kModMessage[]       = "message";
     const char* short_module_names[4];
-    short_module_names[0] = MOD_COMMON;
-    short_module_names[1] = MOD_STATUS;
-    short_module_names[2] = MOD_OBJECT_STORAGE;
-    short_module_names[3] = MOD_MESSAGE;
+    short_module_names[0] = kModCommon;
+    short_module_names[1] = kModStatus;
+    short_module_names[2] = kModObjectStorage;
+    short_module_names[3] = kModMessage;
     for (const char* short_module_name: short_module_names) {
         OwnedPyObject<> descriptors {get_module_descriptor(short_module_name)};
         if (!descriptors) {

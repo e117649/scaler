@@ -1,9 +1,8 @@
 """
-WASM/Pyodide smoke tests.
+Browser-client import tests.
 
 These tests exercise the import paths that the browser-based Scaler client
-exercises on first load (mirroring the cells of
-``docs/source/gallery/wasm_smoke_test.ipynb``):
+exercises on first load:
 
   1. ``import scaler``
   2. ``from scaler.io.ymq import ConnectorSocket``
@@ -26,19 +25,19 @@ import unittest
 
 
 class BrowserClientImportTests(unittest.TestCase):
-    """Import smoke tests mirroring ``docs/source/gallery/wasm_smoke_test.ipynb``."""
+    """Import tests for the browser-side Scaler client surface."""
 
-    def test_cell2_import_scaler(self) -> None:
+    def test_import_scaler(self) -> None:
         scaler = importlib.import_module("scaler")
         self.assertTrue(hasattr(scaler, "__version__"), "scaler module is missing __version__")
 
-    def test_cell3_import_connector_socket(self) -> None:
+    def test_import_connector_socket(self) -> None:
         ymq = importlib.import_module("scaler.io.ymq")
         self.assertTrue(
             hasattr(ymq, "ConnectorSocket"), "scaler.io.ymq must expose ConnectorSocket for the browser client"
         )
 
-    def test_cell4_import_client(self) -> None:
+    def test_import_client(self) -> None:
         client_module = importlib.import_module("scaler.client.client")
         self.assertTrue(hasattr(client_module, "Client"), "scaler.client.client.Client must be importable")
         self.assertTrue(

@@ -62,20 +62,19 @@ runs:
         export CapnProto_DIR="${PWD}/thirdparties/wasm/install/lib/cmake/CapnProto"
         pyodide build . --outdir dist_wasm
 
-    - name: Run browser-client import smoke tests under Pyodide
+    - name: Run browser-client import tests under Pyodide
       shell: bash
       run: |
         # Spin up a Pyodide virtualenv, install the freshly built wasm wheel
-        # into it, then run the browser-client import smoke tests
-        # (tests/wasm/test_browser_client_imports.py). These mirror the cells
-        # of docs/source/gallery/wasm_smoke_test.ipynb and guard against
+        # into it, then run the browser-client import tests
+        # (tests/wasm/test_browser_client_imports.py). These guard against
         # regressions to the wasm import surface (psutil/pyzmq gating, capnp
         # SIDE_MODULE string-literal hardening, multiprocessing avoidance,
         # etc.).
         set -euo pipefail
         # shellcheck disable=SC1091
         source thirdparties/emsdk/emsdk_env.sh
-        wheel="$(ls dist_wasm/opengris_scaler-*-emscripten_*_wasm32.whl | head -n1)"
+        wheel="$(ls dist_wasm/opengris_scaler-*emscripten*wasm32.whl | head -n1)"
         if [[ -z "${wheel}" ]]; then
           echo "No wasm wheel found in dist_wasm/" >&2
           exit 1
