@@ -2,12 +2,15 @@
 # This script builds and installs the required 3rd party C++ libraries.
 #
 # Usage:
-#       ./scripts/library_tool.sh [boost|capnp|libuv] [download|compile|install] [--prefix=PREFIX] [--target=native|wasm]
+#       ./scripts/library_tool.sh [boost|capnp|libuv|emsdk] [download|compile|install] [--prefix=PREFIX] [--target=native|wasm]
 #
 # --target=wasm cross-compiles capnp/libuv against the Emscripten toolchain.
 # It expects emcc/emcmake on PATH (source thirdparties/emsdk/emsdk_env.sh first)
 # and that the host `capnp` tool is already installed (capnp code generation
 # can't run inside wasm). Output defaults to ./thirdparties/wasm/install.
+#
+# emsdk is always installed at ./thirdparties/emsdk (its tooling references its
+# own location); --prefix and --target are ignored for that library.
 
 # Remember:
 #       Update the usage string when you add/remove a dependency or target.
@@ -16,6 +19,9 @@
 BOOST_VERSION="1.88.0"
 CAPNP_VERSION="1.1.0"
 UV_VERSION="1.51.0"
+# emsdk version must match the Pyodide xbuildenv pinned in
+# .github/actions/setup-wasm-env/action.yml (currently 4.0.9 -> Pyodide 0.29.3).
+EMSDK_VERSION="4.0.9"
 
 THIRD_PARTY_DIRECTORY="./thirdparties"
 PATCHES_DIRECTORY="./scripts/patches"
@@ -62,7 +68,7 @@ fi
 PREFIX=$(mkdir -p "${PREFIX}" && cd "${PREFIX}" && pwd)
 
 show_help() {
-    echo "Usage: ./library_tool.sh [boost|capnp|libuv] [download|compile|install] [--prefix=DIR] [--target=native|wasm]"
+    echo "Usage: ./library_tool.sh [boost|capnp|libuv|emsdk] [download|compile|install] [--prefix=DIR] [--target=native|wasm]"
     exit 1
 }
 
@@ -222,6 +228,47 @@ elif [ "$1" == "libuv" ]; then
         cd "${THIRD_PARTY_COMPILED}/${UV_FOLDER_NAME}"
         cmake --install build
         echo "Installed libuv into ${PREFIX}"
+
+    else
+        show_help
+    fi
+elif [ "$1" == "emsdk" ]; then
+    # emsdk is a binary toolchain distribution; it lives at a fixed path so its
+    # internal `emsdk_env.sh` (and the cached compiler/sysroot under
+    # upstream/emscripten/) can be sourced consistently. --prefix / --target are
+    # ignored for this library.
+    EMSDK_DIRECTORY="${THIRD_PARTY_DIRECTORY}/emsdk"
+
+    if [ "$2" == "download" ]; then
+        if [[ -d "${EMSDK_DIRECTORY}/.git" ]]; then
+            echo "emsdk repo already present at ${EMSDK_DIRECTORY}; skipping clone."
+        else
+            mkdir -p "${THIRD_PARTY_DIRECTORY}"
+            # Pinning by tag is sufficient: the emsdk repo's tags match
+            # emscripten release versions (e.g. tag 4.0.9 == Emscripten 4.0.9).
+            git clone --branch "${EMSDK_VERSION}" --depth 1 \
+                https://github.com/emscripten-core/emsdk.git "${EMSDK_DIRECTORY}"
+        fi
+        echo "Downloaded emsdk into ${EMSDK_DIRECTORY}"
+
+    elif [ "$2" == "compile" ]; then
+        # `emsdk install` downloads the pinned compiler / node / sysroot bundle.
+        # No source compilation actually happens, but the step is heavy enough
+        # to justify the same lifecycle slot as the other libraries.
+        if [[ ! -x "${EMSDK_DIRECTORY}/emsdk" ]]; then
+            echo "emsdk not downloaded; run './scripts/library_tool.sh emsdk download' first."
+            exit 1
+        fi
+        "${EMSDK_DIRECTORY}/emsdk" install "${EMSDK_VERSION}"
+        echo "Compiled (downloaded toolchain for) emsdk ${EMSDK_VERSION}"
+
+    elif [ "$2" == "install" ]; then
+        if [[ ! -x "${EMSDK_DIRECTORY}/emsdk" ]]; then
+            echo "emsdk not downloaded; run './scripts/library_tool.sh emsdk download' first."
+            exit 1
+        fi
+        "${EMSDK_DIRECTORY}/emsdk" activate "${EMSDK_VERSION}"
+        echo "Installed (activated) emsdk ${EMSDK_VERSION}; source ${EMSDK_DIRECTORY}/emsdk_env.sh to use it."
 
     else
         show_help

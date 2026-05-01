@@ -57,6 +57,24 @@ class BrowserClientImportTests(unittest.TestCase):
         # using a hardened attribute-name array. Verify it survives the relocator.
         self.assertTrue(hasattr(capnp_mod, "BaseMessage"))
 
+    def test_capnp_struct_keyword_init(self) -> None:
+        # Regression test for the SIDE_MODULE relocator corrupting the inline
+        # "__init__" literal passed to PyObject_SetAttrString in bootstrap.cpp.
+        # When that happened, the descriptor was registered under a garbled key
+        # and ``Resource(cpu=1, rss=2)`` fell through to ``object.__init__``,
+        # raising ``TypeError: Resource() takes no arguments``. Construct a few
+        # representative structs (plain + nested + union-bearing) to exercise
+        # both CapnpStruct.__init__ and CapnpUnionStruct.__init__.
+        capnp_mod = importlib.import_module("scaler.protocol.capnp")
+
+        resource = capnp_mod.Resource(cpu=42, rss=1024)
+        self.assertEqual(resource.cpu, 42)
+        self.assertEqual(resource.rss, 1024)
+
+        heartbeat = capnp_mod.ClientHeartbeat(resource=resource, latencyUS=7)
+        self.assertEqual(heartbeat.resource.cpu, 42)
+        self.assertEqual(heartbeat.latencyUS, 7)
+
 
 if __name__ == "__main__":
     unittest.main()

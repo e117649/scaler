@@ -189,20 +189,48 @@ PyObject* py_capnp_union_from_bytes(PyObject* cls, PyObject* args, PyObject* kwa
     return ::scaler::protocol::pymod::capnp_union_from_bytes(cls, args, kwargs).take();
 }
 
+// initproc adapters wired directly into tp_init. See note in
+// initialize_runtime_modules() on why these bypass the descriptor machinery.
+int capnp_struct_init_slot(PyObject* self, PyObject* args, PyObject* kwargs)
+{
+    auto result = ::scaler::protocol::pymod::capnp_struct_init_method(self, args, kwargs);
+    return result ? 0 : -1;
+}
+
+int capnp_union_init_slot(PyObject* self, PyObject* args, PyObject* kwargs)
+{
+    auto result = ::scaler::protocol::pymod::capnp_union_init_method(self, args, kwargs);
+    return result ? 0 : -1;
+}
+
+// PyMethodDef::ml_name and the keys passed to PyObject_SetAttrString below are
+// stored as ``static const char[]`` arrays rather than inline string literals.
+// Pyodide's SIDE_MODULE wasm relocator can mis-resolve offsets within mergeable
+// .rodata.str sections, corrupting short literals like "__init__" so that the
+// resulting descriptor is registered under the wrong attribute name and
+// ``Resource(cpu=1, rss=2)`` falls through to ``object.__init__`` (which raises
+// ``TypeError: Resource() takes no arguments``). Named char arrays survive the
+// relocator. Keep them in lockstep with the keys used in setattr below.
+static const char NAME_INIT[]       = {'_', '_', 'i', 'n', 'i', 't', '_', '_', '\0'};
+static const char NAME_TO_BYTES[]   = {'t', 'o', '_', 'b', 'y', 't', 'e', 's', '\0'};
+static const char NAME_FROM_BYTES[] = {'f', 'r', 'o', 'm', '_', 'b', 'y', 't', 'e', 's', '\0'};
+static const char NAME_WHICH[]      = {'w', 'h', 'i', 'c', 'h', '\0'};
+static const char NAME_GETATTR[]    = {'_', '_', 'g', 'e', 't', 'a', 't', 't', 'r', '_', '_', '\0'};
+
 static PyMethodDef CAPNP_STRUCT_INIT_DEF     = {
-    "__init__", (PyCFunction)(void (*)(void))py_capnp_struct_init_method, METH_VARARGS | METH_KEYWORDS, nullptr};
+    NAME_INIT, (PyCFunction)(void (*)(void))py_capnp_struct_init_method, METH_VARARGS | METH_KEYWORDS, nullptr};
 static PyMethodDef CAPNP_STRUCT_TO_BYTES_DEF = {
-    "to_bytes", (PyCFunction)py_capnp_struct_to_bytes, METH_NOARGS, nullptr};
+    NAME_TO_BYTES, (PyCFunction)py_capnp_struct_to_bytes, METH_NOARGS, nullptr};
 static PyMethodDef CAPNP_STRUCT_FROM_BYTES_DEF = {
-    "from_bytes", (PyCFunction)(void (*)(void))py_capnp_struct_from_bytes, METH_VARARGS | METH_KEYWORDS, nullptr};
+    NAME_FROM_BYTES, (PyCFunction)(void (*)(void))py_capnp_struct_from_bytes, METH_VARARGS | METH_KEYWORDS, nullptr};
 static PyMethodDef CAPNP_UNION_INIT_DEF = {
-    "__init__", (PyCFunction)(void (*)(void))py_capnp_union_init_method, METH_VARARGS | METH_KEYWORDS, nullptr};
-static PyMethodDef CAPNP_UNION_WHICH_DEF   = {"which", (PyCFunction)py_capnp_union_which, METH_NOARGS, nullptr};
+    NAME_INIT, (PyCFunction)(void (*)(void))py_capnp_union_init_method, METH_VARARGS | METH_KEYWORDS, nullptr};
+static PyMethodDef CAPNP_UNION_WHICH_DEF   = {NAME_WHICH, (PyCFunction)py_capnp_union_which, METH_NOARGS, nullptr};
 static PyMethodDef CAPNP_UNION_GETATTR_DEF = {
-    "__getattr__", (PyCFunction)py_capnp_union_get_attr, METH_VARARGS, nullptr};
-static PyMethodDef CAPNP_UNION_TO_BYTES_DEF = {"to_bytes", (PyCFunction)py_capnp_union_to_bytes, METH_NOARGS, nullptr};
+    NAME_GETATTR, (PyCFunction)py_capnp_union_get_attr, METH_VARARGS, nullptr};
+static PyMethodDef CAPNP_UNION_TO_BYTES_DEF = {NAME_TO_BYTES, (PyCFunction)py_capnp_union_to_bytes, METH_NOARGS, nullptr};
 static PyMethodDef CAPNP_UNION_FROM_BYTES_DEF = {
-    "from_bytes", (PyCFunction)(void (*)(void))py_capnp_union_from_bytes, METH_VARARGS | METH_KEYWORDS, nullptr};
+    NAME_FROM_BYTES, (PyCFunction)(void (*)(void))py_capnp_union_from_bytes, METH_VARARGS | METH_KEYWORDS, nullptr};
 
 OwnedPyObject<> create_enum_type(PyObject* descriptor, const char* module_name)
 {
@@ -483,12 +511,20 @@ bool initialize_runtime_modules(PyObject* module)
     state->capnp_struct_type = capnp_struct_type.get();
     PyObject_SetAttrString(
         capnp_struct_type.get(),
-        "__init__",
+        NAME_INIT,
         OwnedPyObject<>(make_method_descriptor(capnp_struct_type.get(), &CAPNP_STRUCT_INIT_DEF)).get());
     PyObject_SetAttrString(
         capnp_struct_type.get(),
-        "to_bytes",
+        NAME_TO_BYTES,
         OwnedPyObject<>(make_method_descriptor(capnp_struct_type.get(), &CAPNP_STRUCT_TO_BYTES_DEF)).get());
+    // Belt-and-suspenders: also set the tp_init slot directly so that subclasses
+    // created later via type(name, (CapnpStruct,), {}) inherit the C initproc
+    // even if PyObject_SetAttrString's slot-resync logic misbehaves under the
+    // Pyodide SIDE_MODULE relocator. Subclass slot inheritance happens at
+    // type-creation time via inherit_slots() in CPython's type_new, so this
+    // must run before any struct subclasses are created.
+    ((PyTypeObject*)capnp_struct_type.get())->tp_init = capnp_struct_init_slot;
+    PyType_Modified((PyTypeObject*)capnp_struct_type.get());
 
     OwnedPyObject<> union_bases {PyTuple_Pack(1, capnp_struct_type.get())};
     PyDict_SetItemString(
@@ -509,20 +545,25 @@ bool initialize_runtime_modules(PyObject* module)
     state->capnp_union_struct_type = capnp_union_struct_type.get();
     PyObject_SetAttrString(
         capnp_union_struct_type.get(),
-        "__init__",
+        NAME_INIT,
         OwnedPyObject<>(make_method_descriptor(capnp_union_struct_type.get(), &CAPNP_UNION_INIT_DEF)).get());
     PyObject_SetAttrString(
         capnp_union_struct_type.get(),
-        "which",
+        NAME_WHICH,
         OwnedPyObject<>(make_method_descriptor(capnp_union_struct_type.get(), &CAPNP_UNION_WHICH_DEF)).get());
     PyObject_SetAttrString(
         capnp_union_struct_type.get(),
-        "__getattr__",
+        NAME_GETATTR,
         OwnedPyObject<>(make_method_descriptor(capnp_union_struct_type.get(), &CAPNP_UNION_GETATTR_DEF)).get());
     PyObject_SetAttrString(
         capnp_union_struct_type.get(),
-        "to_bytes",
+        NAME_TO_BYTES,
         OwnedPyObject<>(make_method_descriptor(capnp_union_struct_type.get(), &CAPNP_UNION_TO_BYTES_DEF)).get());
+    // See note above on direct tp_init assignment. CapnpUnionStruct subclasses
+    // (created by the loop below for union-bearing structs) need the union
+    // initproc, not the plain struct one inherited from CapnpStruct.
+    ((PyTypeObject*)capnp_union_struct_type.get())->tp_init = capnp_union_init_slot;
+    PyType_Modified((PyTypeObject*)capnp_union_struct_type.get());
 
     static const char ATTR_CAPNP_STRUCT[]       = "CapnpStruct";
     static const char ATTR_CAPNP_UNION_STRUCT[] = "CapnpUnionStruct";
