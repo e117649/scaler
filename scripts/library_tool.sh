@@ -149,8 +149,8 @@ elif [ "$1" == "capnp" ]; then
                 -DEXTERNAL_CAPNP=ON \
                 -DWITH_OPENSSL=OFF \
                 -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-                -DCMAKE_C_FLAGS="-fPIC" \
-                -DCMAKE_CXX_FLAGS="-fPIC"
+                -DCMAKE_C_FLAGS="-fPIC -fwasm-exceptions -sSUPPORT_LONGJMP" \
+                -DCMAKE_CXX_FLAGS="-fPIC -fwasm-exceptions -sSUPPORT_LONGJMP"
             cmake --build build-wasm --config Release -j "${NUM_CORES}"
         else
             cd "${THIRD_PARTY_COMPILED}/${CAPNP_FOLDER_NAME}"
@@ -209,8 +209,8 @@ elif [ "$1" == "libuv" ]; then
                 -DCMAKE_BUILD_TYPE=Release \
                 -DBUILD_TESTING=OFF \
                 -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-                -DCMAKE_C_FLAGS="-fPIC" \
-                -DCMAKE_CXX_FLAGS="-fPIC"
+                -DCMAKE_C_FLAGS="-fPIC -fwasm-exceptions -sSUPPORT_LONGJMP" \
+                -DCMAKE_CXX_FLAGS="-fPIC -fwasm-exceptions -sSUPPORT_LONGJMP"
         else
             cd "${THIRD_PARTY_COMPILED}/${UV_FOLDER_NAME}"
             cmake -B build -DCMAKE_INSTALL_PREFIX="${PREFIX}" -DBUILD_TESTING=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON

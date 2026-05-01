@@ -31,9 +31,13 @@ PyMODINIT_FUNC PyInit_capnp(void)
 {
     using scaler::utility::pymod::OwnedPyObject;
 
+    // The module name is materialized as a static char array (not a string literal)
+    // because Pyodide's SIDE_MODULE wasm relocator can mis-resolve offsets within
+    // mergeable .rodata.str sections, causing the module name to be truncated.
+    static const char MODULE_NAME[] = {'c', 'a', 'p', 'n', 'p', '\0'};
     scaler::protocol::pymod::MODULE_DEF = {
         PyModuleDef_HEAD_INIT,
-        "capnp",
+        MODULE_NAME,
         nullptr,
         sizeof(scaler::protocol::pymod::CapnpModuleState),
         nullptr,

@@ -1,6 +1,7 @@
 import dataclasses
 import functools
 import logging
+import sys
 import threading
 from collections import Counter
 from inspect import signature
@@ -25,7 +26,11 @@ from scaler.utility.graph.topological_sorter import TopologicalSorter
 from scaler.utility.identifiers import ClientID, ObjectID, TaskID
 from scaler.utility.metadata.profile_result import ProfileResult
 from scaler.utility.metadata.task_flags import TaskFlags, retrieve_task_flags_from_task
-from scaler.worker.agent.processor.processor import Processor
+
+if sys.platform != "emscripten":
+    from scaler.worker.agent.processor.processor import Processor
+else:
+    Processor = None  # type: ignore[assignment]
 
 _T = TypeVar("_T")
 
@@ -707,6 +712,8 @@ class Client:
     @staticmethod
     def __get_parent_task_priority() -> Optional[int]:
         """If the client is running inside a Scaler processor, returns the priority of the associated task."""
+        if Processor is None:
+            return None
 
         current_processor = Processor.get_current_processor()
 
@@ -725,7 +732,7 @@ class Client:
             return AddressConfig.from_string(address)
 
         # No address provided, check if we're running inside a worker context
-        current_processor = Processor.get_current_processor()
+        current_processor = Processor.get_current_processor() if Processor is not None else None
         if current_processor is None:
             raise ValueError(
                 "No scheduler address provided and not running inside a worker context. "

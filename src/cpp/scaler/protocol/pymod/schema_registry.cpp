@@ -18,66 +18,78 @@ void SchemaRegistry::registerCompiledSchema(const char* moduleName, const char* 
     _topLevelTypeIds.emplace(typeName, schema.getProto().getId());
 }
 
+// Pyodide's SIDE_MODULE relocator mis-resolves offsets within mergeable
+// `.rodata.str1.1` sections, causing tail-merged short string literals to
+// resolve to bytes inside longer literals at load time. Storing module names
+// in dedicated `static const char[]` arrays forces the linker to allocate
+// them in non-mergeable storage so the addresses remain valid.
+namespace {
+static const char MOD_COMMON[]         = "common";
+static const char MOD_STATUS[]         = "status";
+static const char MOD_MESSAGE[]        = "message";
+static const char MOD_OBJECT_STORAGE[] = "object_storage";
+}  // namespace
+
 bool SchemaRegistry::init()
 {
     if (_initialized) {
         return true;
     }
 
-    registerCompiledSchema<scaler::protocol::TaskResultType>("common", "TaskResultType");
-    registerCompiledSchema<scaler::protocol::TaskCancelConfirmType>("common", "TaskCancelConfirmType");
-    registerCompiledSchema<scaler::protocol::TaskTransition>("common", "TaskTransition");
-    registerCompiledSchema<scaler::protocol::TaskState>("common", "TaskState");
-    registerCompiledSchema<scaler::protocol::WorkerState>("common", "WorkerState");
-    registerCompiledSchema<scaler::protocol::TaskCapability>("common", "TaskCapability");
-    registerCompiledSchema<scaler::protocol::ObjectMetadata>("common", "ObjectMetadata");
-    registerCompiledSchema<scaler::protocol::ObjectStorageAddress>("common", "ObjectStorageAddress");
+    registerCompiledSchema<scaler::protocol::TaskResultType>(MOD_COMMON, "TaskResultType");
+    registerCompiledSchema<scaler::protocol::TaskCancelConfirmType>(MOD_COMMON, "TaskCancelConfirmType");
+    registerCompiledSchema<scaler::protocol::TaskTransition>(MOD_COMMON, "TaskTransition");
+    registerCompiledSchema<scaler::protocol::TaskState>(MOD_COMMON, "TaskState");
+    registerCompiledSchema<scaler::protocol::WorkerState>(MOD_COMMON, "WorkerState");
+    registerCompiledSchema<scaler::protocol::TaskCapability>(MOD_COMMON, "TaskCapability");
+    registerCompiledSchema<scaler::protocol::ObjectMetadata>(MOD_COMMON, "ObjectMetadata");
+    registerCompiledSchema<scaler::protocol::ObjectStorageAddress>(MOD_COMMON, "ObjectStorageAddress");
 
-    registerCompiledSchema<scaler::protocol::Resource>("status", "Resource");
-    registerCompiledSchema<scaler::protocol::ObjectManagerStatus>("status", "ObjectManagerStatus");
-    registerCompiledSchema<scaler::protocol::ClientManagerStatus>("status", "ClientManagerStatus");
-    registerCompiledSchema<scaler::protocol::TaskManagerStatus>("status", "TaskManagerStatus");
-    registerCompiledSchema<scaler::protocol::ProcessorStatus>("status", "ProcessorStatus");
-    registerCompiledSchema<scaler::protocol::WorkerStatus>("status", "WorkerStatus");
-    registerCompiledSchema<scaler::protocol::WorkerManagerStatus>("status", "WorkerManagerStatus");
-    registerCompiledSchema<scaler::protocol::ScalingManagerStatus>("status", "ScalingManagerStatus");
-    registerCompiledSchema<scaler::protocol::BinderStatus>("status", "BinderStatus");
+    registerCompiledSchema<scaler::protocol::Resource>(MOD_STATUS, "Resource");
+    registerCompiledSchema<scaler::protocol::ObjectManagerStatus>(MOD_STATUS, "ObjectManagerStatus");
+    registerCompiledSchema<scaler::protocol::ClientManagerStatus>(MOD_STATUS, "ClientManagerStatus");
+    registerCompiledSchema<scaler::protocol::TaskManagerStatus>(MOD_STATUS, "TaskManagerStatus");
+    registerCompiledSchema<scaler::protocol::ProcessorStatus>(MOD_STATUS, "ProcessorStatus");
+    registerCompiledSchema<scaler::protocol::WorkerStatus>(MOD_STATUS, "WorkerStatus");
+    registerCompiledSchema<scaler::protocol::WorkerManagerStatus>(MOD_STATUS, "WorkerManagerStatus");
+    registerCompiledSchema<scaler::protocol::ScalingManagerStatus>(MOD_STATUS, "ScalingManagerStatus");
+    registerCompiledSchema<scaler::protocol::BinderStatus>(MOD_STATUS, "BinderStatus");
 
-    registerCompiledSchema<scaler::protocol::Task>("message", "Task");
-    registerCompiledSchema<scaler::protocol::TaskCancel>("message", "TaskCancel");
-    registerCompiledSchema<scaler::protocol::TaskLog>("message", "TaskLog");
-    registerCompiledSchema<scaler::protocol::TaskResult>("message", "TaskResult");
-    registerCompiledSchema<scaler::protocol::TaskCancelConfirm>("message", "TaskCancelConfirm");
-    registerCompiledSchema<scaler::protocol::GraphTask>("message", "GraphTask");
-    registerCompiledSchema<scaler::protocol::ClientHeartbeat>("message", "ClientHeartbeat");
-    registerCompiledSchema<scaler::protocol::ClientHeartbeatEcho>("message", "ClientHeartbeatEcho");
-    registerCompiledSchema<scaler::protocol::WorkerHeartbeat>("message", "WorkerHeartbeat");
-    registerCompiledSchema<scaler::protocol::WorkerHeartbeatEcho>("message", "WorkerHeartbeatEcho");
-    registerCompiledSchema<scaler::protocol::WorkerManagerHeartbeat>("message", "WorkerManagerHeartbeat");
-    registerCompiledSchema<scaler::protocol::WorkerManagerHeartbeatEcho>("message", "WorkerManagerHeartbeatEcho");
-    registerCompiledSchema<scaler::protocol::WorkerManagerCommandType>("message", "WorkerManagerCommandType");
-    registerCompiledSchema<scaler::protocol::WorkerManagerCommand>("message", "WorkerManagerCommand");
-    registerCompiledSchema<scaler::protocol::WorkerManagerCommandResponse>("message", "WorkerManagerCommandResponse");
-    registerCompiledSchema<scaler::protocol::ObjectInstruction>("message", "ObjectInstruction");
-    registerCompiledSchema<scaler::protocol::DisconnectRequest>("message", "DisconnectRequest");
-    registerCompiledSchema<scaler::protocol::DisconnectResponse>("message", "DisconnectResponse");
-    registerCompiledSchema<scaler::protocol::ClientDisconnect>("message", "ClientDisconnect");
-    registerCompiledSchema<scaler::protocol::ClientShutdownResponse>("message", "ClientShutdownResponse");
-    registerCompiledSchema<scaler::protocol::StateClient>("message", "StateClient");
-    registerCompiledSchema<scaler::protocol::StateObject>("message", "StateObject");
-    registerCompiledSchema<scaler::protocol::StateBalanceAdvice>("message", "StateBalanceAdvice");
-    registerCompiledSchema<scaler::protocol::StateScheduler>("message", "StateScheduler");
-    registerCompiledSchema<scaler::protocol::StateWorker>("message", "StateWorker");
-    registerCompiledSchema<scaler::protocol::StateTask>("message", "StateTask");
-    registerCompiledSchema<scaler::protocol::StateGraphTask>("message", "StateGraphTask");
-    registerCompiledSchema<scaler::protocol::ProcessorInitialized>("message", "ProcessorInitialized");
-    registerCompiledSchema<scaler::protocol::InformationRequest>("message", "InformationRequest");
-    registerCompiledSchema<scaler::protocol::InformationResponse>("message", "InformationResponse");
-    registerCompiledSchema<scaler::protocol::Message>("message", "Message");
+    registerCompiledSchema<scaler::protocol::Task>(MOD_MESSAGE, "Task");
+    registerCompiledSchema<scaler::protocol::TaskCancel>(MOD_MESSAGE, "TaskCancel");
+    registerCompiledSchema<scaler::protocol::TaskLog>(MOD_MESSAGE, "TaskLog");
+    registerCompiledSchema<scaler::protocol::TaskResult>(MOD_MESSAGE, "TaskResult");
+    registerCompiledSchema<scaler::protocol::TaskCancelConfirm>(MOD_MESSAGE, "TaskCancelConfirm");
+    registerCompiledSchema<scaler::protocol::GraphTask>(MOD_MESSAGE, "GraphTask");
+    registerCompiledSchema<scaler::protocol::ClientHeartbeat>(MOD_MESSAGE, "ClientHeartbeat");
+    registerCompiledSchema<scaler::protocol::ClientHeartbeatEcho>(MOD_MESSAGE, "ClientHeartbeatEcho");
+    registerCompiledSchema<scaler::protocol::WorkerHeartbeat>(MOD_MESSAGE, "WorkerHeartbeat");
+    registerCompiledSchema<scaler::protocol::WorkerHeartbeatEcho>(MOD_MESSAGE, "WorkerHeartbeatEcho");
+    registerCompiledSchema<scaler::protocol::WorkerManagerHeartbeat>(MOD_MESSAGE, "WorkerManagerHeartbeat");
+    registerCompiledSchema<scaler::protocol::WorkerManagerHeartbeatEcho>(MOD_MESSAGE, "WorkerManagerHeartbeatEcho");
+    registerCompiledSchema<scaler::protocol::WorkerManagerCommandType>(MOD_MESSAGE, "WorkerManagerCommandType");
+    registerCompiledSchema<scaler::protocol::WorkerManagerCommand>(MOD_MESSAGE, "WorkerManagerCommand");
+    registerCompiledSchema<scaler::protocol::WorkerManagerCommandResponse>(MOD_MESSAGE, "WorkerManagerCommandResponse");
+    registerCompiledSchema<scaler::protocol::ObjectInstruction>(MOD_MESSAGE, "ObjectInstruction");
+    registerCompiledSchema<scaler::protocol::DisconnectRequest>(MOD_MESSAGE, "DisconnectRequest");
+    registerCompiledSchema<scaler::protocol::DisconnectResponse>(MOD_MESSAGE, "DisconnectResponse");
+    registerCompiledSchema<scaler::protocol::ClientDisconnect>(MOD_MESSAGE, "ClientDisconnect");
+    registerCompiledSchema<scaler::protocol::ClientShutdownResponse>(MOD_MESSAGE, "ClientShutdownResponse");
+    registerCompiledSchema<scaler::protocol::StateClient>(MOD_MESSAGE, "StateClient");
+    registerCompiledSchema<scaler::protocol::StateObject>(MOD_MESSAGE, "StateObject");
+    registerCompiledSchema<scaler::protocol::StateBalanceAdvice>(MOD_MESSAGE, "StateBalanceAdvice");
+    registerCompiledSchema<scaler::protocol::StateScheduler>(MOD_MESSAGE, "StateScheduler");
+    registerCompiledSchema<scaler::protocol::StateWorker>(MOD_MESSAGE, "StateWorker");
+    registerCompiledSchema<scaler::protocol::StateTask>(MOD_MESSAGE, "StateTask");
+    registerCompiledSchema<scaler::protocol::StateGraphTask>(MOD_MESSAGE, "StateGraphTask");
+    registerCompiledSchema<scaler::protocol::ProcessorInitialized>(MOD_MESSAGE, "ProcessorInitialized");
+    registerCompiledSchema<scaler::protocol::InformationRequest>(MOD_MESSAGE, "InformationRequest");
+    registerCompiledSchema<scaler::protocol::InformationResponse>(MOD_MESSAGE, "InformationResponse");
+    registerCompiledSchema<scaler::protocol::Message>(MOD_MESSAGE, "Message");
 
-    registerCompiledSchema<scaler::protocol::ObjectRequestHeader>("object_storage", "ObjectRequestHeader");
-    registerCompiledSchema<scaler::protocol::ObjectID>("object_storage", "ObjectID");
-    registerCompiledSchema<scaler::protocol::ObjectResponseHeader>("object_storage", "ObjectResponseHeader");
+    registerCompiledSchema<scaler::protocol::ObjectRequestHeader>(MOD_OBJECT_STORAGE, "ObjectRequestHeader");
+    registerCompiledSchema<scaler::protocol::ObjectID>(MOD_OBJECT_STORAGE, "ObjectID");
+    registerCompiledSchema<scaler::protocol::ObjectResponseHeader>(MOD_OBJECT_STORAGE, "ObjectResponseHeader");
 
     for (const auto& schema: _loader.getAllLoaded()) {
         _schemasById.emplace(schema.getProto().getId(), schema);

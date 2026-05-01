@@ -25,10 +25,14 @@ OwnedPyObject<> build_schema_descriptor(capnp::Schema schema)
         return nullptr;
     }
 
-    const char* kind = proto.isEnum() ? "enum" : "struct";
+    static const char KIND_ENUM[]   = {'e','n','u','m','\0'};
+    static const char KIND_STRUCT[] = {'s','t','r','u','c','t','\0'};
+    const char* kind = proto.isEnum() ? KIND_ENUM : KIND_STRUCT;
     PyDict_SetItemString(descriptor.get(), "kind", OwnedPyObject<>(PyUnicode_FromString(kind)).get());
-    PyDict_SetItemString(
-        descriptor.get(), "name", OwnedPyObject<>(PyUnicode_FromString(schema.getUnqualifiedName().cStr())).get());
+    auto unqualified = schema.getUnqualifiedName();
+    auto display     = proto.getDisplayName();
+    auto prefix_len  = proto.getDisplayNamePrefixLength();
+    PyDict_SetItemString(descriptor.get(), "name", OwnedPyObject<>(PyUnicode_FromString(unqualified.cStr())).get());
     PyDict_SetItemString(descriptor.get(), "id", OwnedPyObject<>(PyLong_FromUnsignedLongLong(proto.getId())).get());
 
     if (proto.isEnum()) {
@@ -39,8 +43,12 @@ OwnedPyObject<> build_schema_descriptor(capnp::Schema schema)
         }
 
         for (auto enumerant: enum_schema.getEnumerants()) {
-            OwnedPyObject<> tuple {
-                Py_BuildValue("(sk)", enumerant.getProto().getName().cStr(), (unsigned long)enumerant.getOrdinal())};
+            OwnedPyObject<> name_obj {PyUnicode_FromString(enumerant.getProto().getName().cStr())};
+            OwnedPyObject<> ord_obj {PyLong_FromUnsignedLong((unsigned long)enumerant.getOrdinal())};
+            if (!name_obj || !ord_obj) {
+                return nullptr;
+            }
+            OwnedPyObject<> tuple {PyTuple_Pack(2, name_obj.get(), ord_obj.get())};
             if (!tuple || PyList_Append(members.get(), tuple.get()) < 0) {
                 return nullptr;
             }
@@ -320,13 +328,28 @@ OwnedPyObject<> create_enum_type(PyObject* descriptor, const char* module_name)
         PyErr_SetString(PyExc_RuntimeError, "capnp enum class state is unavailable");
         return {};
     }
-    OwnedPyObject<> enum_type {
-        PyObject_CallFunctionObjArgs(state->enum_class.get(), name.get(), members_dict.get(), nullptr)};
+    OwnedPyObject<> module_name_obj {PyUnicode_FromString(module_name)};
+    if (!module_name_obj) {
+        return nullptr;
+    }
+    // Pass `module=` explicitly so enum.Enum's functional API does not attempt
+    // to infer __module__ via sys._getframe inspection (which fails when the
+    // caller is a C extension and, on Python 3.13+, ends up triggering an
+    // empty-name __import__("") that raises ValueError("Empty module name")).
+    OwnedPyObject<> kwargs {PyDict_New()};
+    static const char MODULE_KW[] = {'m','o','d','u','l','e','\0'};
+    if (!kwargs || PyDict_SetItemString(kwargs.get(), MODULE_KW, module_name_obj.get()) < 0) {
+        return nullptr;
+    }
+    OwnedPyObject<> args {PyTuple_Pack(2, name.get(), members_dict.get())};
+    if (!args) {
+        return nullptr;
+    }
+    OwnedPyObject<> enum_type {PyObject_Call(state->enum_class.get(), args.get(), kwargs.get())};
     if (!enum_type) {
         return nullptr;
     }
-    OwnedPyObject<> module_name_obj {PyUnicode_FromString(module_name)};
-    if (!module_name_obj || PyObject_SetAttrString(enum_type.get(), "__module__", module_name_obj.get()) < 0 ||
+    if (PyObject_SetAttrString(enum_type.get(), "__module__", module_name_obj.get()) < 0 ||
         PyObject_SetAttrString(enum_type.get(), "_schema_node_id", schema_id_obj.get()) < 0) {
         return nullptr;
     }
@@ -395,10 +418,13 @@ OwnedPyObject<> build_node_from_descriptor(
     if (!kind) {
         return nullptr;
     }
-    if (PyUnicode_CompareWithASCIIString(kind, "enum") == 0) {
+    static const char ENUM_KIND[] = {'e','n','u','m','\0'};
+    int is_enum = PyUnicode_CompareWithASCIIString(kind, ENUM_KIND);
+    if (is_enum == 0) {
         return create_enum_type(descriptor, module_name);
     }
-    return create_struct_type(descriptor, module_name, pending);
+    auto r = create_struct_type(descriptor, module_name, pending);
+    return r;
 }
 
 bool finalize_pending_types(const std::vector<std::pair<OwnedPyObject<>, OwnedPyObject<>>>& pending)
@@ -508,6 +534,15 @@ OwnedPyObject<> get_module_descriptor(const char* module_name)
 
 bool initialize_runtime_modules(PyObject* module)
 {
+    // NOTE: Many strings used as module names, attribute keys, etc. below are declared as
+    // `static const char NAME[]` arrays rather than inline string literals. This is required
+    // for Pyodide/Emscripten SIDE_MODULE builds: the wasm relocator can mis-resolve offsets
+    // within mergeable .rodata.str sections, which corrupts (truncates / misaligns) raw string
+    // literals passed to the CPython C API. Using named static char arrays forces the compiler
+    // to emit them as ordinary symbols that survive relocation. Build flags additionally pass
+    // -fno-merge-all-constants to discourage merging. Do not convert these back to bare string
+    // literals without testing the wasm wheel.
+
     auto* state = get_module_state(module);
     if (!state) {
         PyErr_SetString(PyExc_RuntimeError, "capnp module state is unavailable");
@@ -520,11 +555,13 @@ bool initialize_runtime_modules(PyObject* module)
     }
     PyErr_Clear();
 
-    OwnedPyObject<> enum_module {PyImport_ImportModule("enum")};
+    static const char enum_name[] = {'e', 'n', 'u', 'm', '\0'};
+    OwnedPyObject<> enum_module {PyImport_ImportModule(enum_name)};
     if (!enum_module) {
         return false;
     }
-    state->enum_class = PyObject_GetAttrString(enum_module.get(), "Enum");
+    static const char enum_attr_name[] = {'E', 'n', 'u', 'm', '\0'};
+    state->enum_class                  = PyObject_GetAttrString(enum_module.get(), enum_attr_name);
     if (!state->enum_class) {
         return false;
     }
@@ -629,12 +666,25 @@ bool initialize_runtime_modules(PyObject* module)
         "to_bytes",
         OwnedPyObject<>(make_method_descriptor(capnp_union_struct_type.get(), &CAPNP_UNION_TO_BYTES_DEF)).get());
 
-    PyModule_AddObjectRef(base_module.get(), "EnumFieldValue", enum_field_value_type.get());
-    PyModule_AddObjectRef(base_module.get(), "CapnpStruct", capnp_struct_type.get());
-    PyModule_AddObjectRef(base_module.get(), "CapnpUnionStruct", capnp_union_struct_type.get());
-    PyModule_AddObjectRef(module, "BaseMessage", capnp_struct_type.get());
+    static const char ATTR_ENUM_FIELD_VALUE[]   = "EnumFieldValue";
+    static const char ATTR_CAPNP_STRUCT[]       = "CapnpStruct";
+    static const char ATTR_CAPNP_UNION_STRUCT[] = "CapnpUnionStruct";
+    static const char ATTR_BASE_MESSAGE[]       = "BaseMessage";
+    PyModule_AddObjectRef(base_module.get(), ATTR_ENUM_FIELD_VALUE, enum_field_value_type.get());
+    PyModule_AddObjectRef(base_module.get(), ATTR_CAPNP_STRUCT, capnp_struct_type.get());
+    PyModule_AddObjectRef(base_module.get(), ATTR_CAPNP_UNION_STRUCT, capnp_union_struct_type.get());
+    PyModule_AddObjectRef(module, ATTR_BASE_MESSAGE, capnp_struct_type.get());
 
-    for (const char* short_module_name: {"common", "status", "object_storage", "message"}) {
+    static const char MOD_COMMON[]         = "common";
+    static const char MOD_STATUS[]         = "status";
+    static const char MOD_OBJECT_STORAGE[] = "object_storage";
+    static const char MOD_MESSAGE[]        = "message";
+    const char* short_module_names[4];
+    short_module_names[0] = MOD_COMMON;
+    short_module_names[1] = MOD_STATUS;
+    short_module_names[2] = MOD_OBJECT_STORAGE;
+    short_module_names[3] = MOD_MESSAGE;
+    for (const char* short_module_name: short_module_names) {
         OwnedPyObject<> descriptors {get_module_descriptor(short_module_name)};
         if (!descriptors) {
             return false;
@@ -652,6 +702,8 @@ bool initialize_runtime_modules(PyObject* module)
         Py_ssize_t descriptor_count = PyList_Size(descriptors.get());
         for (Py_ssize_t index = 0; index < descriptor_count; ++index) {
             PyObject* descriptor = PyList_GetItem(descriptors.get(), index);
+            PyObject* dname_obj = PyDict_GetItemString(descriptor, "name");
+            const char* dname = dname_obj ? PyUnicode_AsUTF8(dname_obj) : "?";
             OwnedPyObject<> object {build_node_from_descriptor(descriptor, full_module_name.c_str(), pending)};
             if (!object) {
                 return false;

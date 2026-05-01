@@ -21,9 +21,9 @@ dependencies = [
     "argcomplete",
     "bidict",
     "cloudpickle",
-    "psutil==7.2.2",
-    "pyzmq<27; python_version < '3.9'",
-    "pyzmq; python_version >= '3.9'",
+    "psutil==7.2.2; sys_platform != 'emscripten'",
+    "pyzmq<27; python_version < '3.9' and sys_platform != 'emscripten'",
+    "pyzmq; python_version >= '3.9' and sys_platform != 'emscripten'",
     "sortedcontainers==2.4.0",
     "tblib",
     "typing-extensions",
@@ -98,6 +98,7 @@ scaler = "scaler.entry_points.scaler:main"
 [tool.scikit-build]
 cmake.source-dir = "."
 wheel.packages = ["src/scaler"]
+wheel.exclude = ["**/*.capnp.c++", "**/*.capnp.h"]
 build.targets = [
     "py_ymq",
     "py_object_storage_server",

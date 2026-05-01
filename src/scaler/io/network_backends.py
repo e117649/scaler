@@ -1,18 +1,25 @@
 import os
+import sys
 import tempfile
 from datetime import timedelta
 from typing import Awaitable, Callable, Optional
 
-import zmq
-import zmq.asyncio
+if sys.platform != "emscripten":
+    import zmq
+    import zmq.asyncio
+
+    from scaler.io.async_binder import ZMQAsyncBinder
+    from scaler.io.async_connector import ZMQAsyncConnector
+    from scaler.io.async_publisher import ZMQAsyncPublisher
+    from scaler.io.sync_connector import ZMQSyncConnector
+    from scaler.io.sync_subscriber import ZMQSyncSubscriber
+else:
+    zmq = None  # type: ignore[assignment]
 
 from scaler.config.defaults import SCALER_NETWORK_BACKEND
 from scaler.config.types.address import AddressConfig, SocketType
 from scaler.config.types.network_backend import NetworkBackendType
 from scaler.io import ymq
-from scaler.io.async_binder import ZMQAsyncBinder
-from scaler.io.async_connector import ZMQAsyncConnector
-from scaler.io.async_publisher import ZMQAsyncPublisher
 from scaler.io.mixins import (
     AsyncBinder,
     AsyncConnector,
@@ -24,8 +31,6 @@ from scaler.io.mixins import (
     SyncObjectStorageConnector,
     SyncSubscriber,
 )
-from scaler.io.sync_connector import ZMQSyncConnector
-from scaler.io.sync_subscriber import ZMQSyncSubscriber
 from scaler.io.ymq_async_binder import YMQAsyncBinder
 from scaler.io.ymq_async_connector import YMQAsyncConnector
 from scaler.io.ymq_async_object_storage_connector import YMQAsyncObjectStorageConnector
@@ -111,7 +116,7 @@ class YMQNetworkBackend(NetworkBackend):
     def __init__(self, num_threads: int):
         self._context: Optional[ymq.IOContext] = ymq.IOContext(num_threads=num_threads)
 
-        self._publisher_context = zmq.asyncio.Context(io_threads=num_threads)
+        self._publisher_context = zmq.asyncio.Context(io_threads=num_threads) if zmq is not None else None
 
         self._destroyed = False
 
@@ -122,7 +127,8 @@ class YMQNetworkBackend(NetworkBackend):
         self._destroyed = True
 
         self._context = None
-        self._publisher_context.destroy(linger=0)
+        if self._publisher_context is not None:
+            self._publisher_context.destroy(linger=0)
 
     @staticmethod
     def create_internal_address(name: str, same_process: bool) -> AddressConfig:
@@ -186,6 +192,8 @@ def get_network_backend_from_env(io_threads: int = 1) -> NetworkBackend:
     backend = get_scaler_network_backend_type_from_env()
 
     if backend == NetworkBackendType.tcp_zmq:
+        if zmq is None:
+            raise RuntimeError("tcp_zmq backend is not available on this platform (zmq missing)")
         return ZMQNetworkBackend(io_threads=io_threads)
     elif backend == NetworkBackendType.ymq:
         return YMQNetworkBackend(num_threads=io_threads)
