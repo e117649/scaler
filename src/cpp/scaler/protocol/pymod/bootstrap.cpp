@@ -560,8 +560,6 @@ bool initialize_runtime_modules(PyObject* module)
         Py_ssize_t descriptor_count = PyList_Size(descriptors.get());
         for (Py_ssize_t index = 0; index < descriptor_count; ++index) {
             PyObject* descriptor = PyList_GetItem(descriptors.get(), index);
-            PyObject* dname_obj = PyDict_GetItemString(descriptor, "name");
-            const char* dname = dname_obj ? PyUnicode_AsUTF8(dname_obj) : "?";
             OwnedPyObject<> object {build_node_from_descriptor(descriptor, full_module_name.c_str(), pending)};
             if (!object) {
                 return false;

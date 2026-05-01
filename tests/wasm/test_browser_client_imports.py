@@ -35,8 +35,7 @@ class BrowserClientImportTests(unittest.TestCase):
     def test_cell3_import_connector_socket(self) -> None:
         ymq = importlib.import_module("scaler.io.ymq")
         self.assertTrue(
-            hasattr(ymq, "ConnectorSocket"),
-            "scaler.io.ymq must expose ConnectorSocket for the browser client",
+            hasattr(ymq, "ConnectorSocket"), "scaler.io.ymq must expose ConnectorSocket for the browser client"
         )
 
     def test_cell4_import_client(self) -> None:
