@@ -1,18 +1,14 @@
 FROM mcr.microsoft.com/devcontainers/base:noble
 RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get update \
-    && apt-get -y install cmake pkg-config gcc-14 g++-14 libgraphblas-dev python3-pip python3-venv pipx tmux \
+    && apt-get -y install cmake pkg-config gcc-14 g++-14 libgraphblas-dev pandoc python3-pip python3-venv pipx tmux \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
     && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100 \
     && sudo -u vscode pipx install uv
 
-# Native deps (boost, capnp, libuv) install into /usr/local; everything wasm-
-# related goes under /opt/scaler/ so it survives the workspace bind mount that
-# would otherwise shadow ./thirdparties/. THIRD_PARTY_DIR redirects
-# library_tool.sh's working tree (downloaded tarballs + build trees + emsdk +
-# wasm install prefix) under /opt/scaler.
+# Absolute path so the bake (CWD=/) and dev-shell invocations (CWD=/workspaces/scaler) agree on the same staging tree.
 ENV THIRD_PARTY_DIR=/opt/scaler
 COPY scripts /tmp/scaler-scripts
 RUN /tmp/scaler-scripts/library_tool.sh boost download \

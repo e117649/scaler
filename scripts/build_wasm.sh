@@ -1,24 +1,32 @@
 #!/usr/bin/env bash
-# build_wasm_wheel.sh — build the wasm wheel and deploy it to the docs site.
+# build_wasm.sh — build the wasm wheel and deploy it to the docs site.
 #
 # Run from the workspace root:
-#   ./build_wasm_wheel.sh
+#   ./scripts/build_wasm.sh
 #
 # This script intentionally uses a dedicated Python 3.13 virtual environment
-# (.venv-wasm) instead of the project's main .venv. The main devcontainer venv
-# is Python 3.12, but the wasm build needs the same Python version CI uses so
-# pyodide-build resolves the matching xbuildenv / Emscripten toolchain.
+# under the user's cache directory instead of the project's main .venv. The
+# normal dev venv stays on Python 3.12 for editing, linting, and docs builds;
+# the wasm build needs the same Python version CI uses so pyodide-build
+# resolves the matching xbuildenv / Emscripten toolchain.
 #
 # THIRD_PARTY_DIR controls where the wasm toolchain lives (emsdk, wasm-target
 # capnp/libuv). Defaults to ./thirdparties; the devcontainer sets it to
 # /opt/scaler via the Dockerfile ENV.
+#
+# CPython 3.13 cross-component constraint: the produced wheel embeds the
+# CPython 3.13 ABI of bootstrap.cpp's capnp glue. The scheduler and worker(s)
+# the wasm client connects to MUST also be running CPython 3.13, otherwise
+# capnp struct decoding will fail with opaque errors. Only the wasm client is
+# pinned to 3.13 by Pyodide; native scheduler/worker venvs need to match.
 
 set -euo pipefail
 
 THIRD_PARTY_DIR="${THIRD_PARTY_DIR:-${PWD}/thirdparties}"
 EMSDK_ENV="${THIRD_PARTY_DIR}/emsdk/emsdk_env.sh"
 WASM_INSTALL="${THIRD_PARTY_DIR}/wasm/install"
-WASM_VENV="${PWD}/.venv-wasm"
+WASM_VENV_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}/opengris-scaler"
+WASM_VENV="${WASM_VENV_ROOT}/pyodide-build-venv"
 
 if ! command -v uv >/dev/null 2>&1; then
     echo "uv is required to create the Python 3.13 wasm build environment."
@@ -26,6 +34,7 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 # 1. Create / refresh the dedicated Python 3.13 wasm build venv.
+mkdir -p "${WASM_VENV_ROOT}"
 uv venv "${WASM_VENV}" --python 3.13 --allow-existing
 # shellcheck disable=SC1091
 source "${WASM_VENV}/bin/activate"
@@ -69,4 +78,4 @@ mkdir -p docs/build/html/_static/wasm
 cp dist_wasm/opengris_scaler-*emscripten_4_0_9*wasm32.whl docs/build/html/_static/wasm/
 echo ""
 echo "Wheel deployed to docs/build/html/_static/wasm/"
-echo "Run test_jupyterlite.sh to start the cluster."
+echo "Run scripts/test_jupyterlite.sh to start the cluster."

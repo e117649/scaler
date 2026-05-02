@@ -22,12 +22,12 @@ dependencies = [
     "bidict",
     "cloudpickle",
     "psutil==7.2.2; sys_platform != 'emscripten'",
-    "pyzmq<27; python_version < '3.9' and sys_platform != 'emscripten'",
     "pyzmq; python_version >= '3.9' and sys_platform != 'emscripten'",
+    "pyzmq<27; python_version < '3.9' and sys_platform != 'emscripten'",
     "sortedcontainers==2.4.0",
     "tblib",
-    "typing-extensions",
     "tomli>=2.0; python_version < '3.11'",
+    "typing-extensions",
 ]
 
 [project.optional-dependencies]
@@ -65,11 +65,18 @@ all = [
 [dependency-groups]
 dev = [
     "black>=24.8.0; python_version >= '3.10'",
-    "isort>=7.0.0; python_version >= '3.10'",
-    "flake8>=5.0.4",
     "flake8-pyproject>=1.2.3",
+    "flake8>=5.0.4",
+    "isort>=7.0.0; python_version >= '3.10'",
+    "jupyterlite-pyodide-kernel",
+    "jupyterlite-sphinx",
     "mypy>=1.14.1",
+    "nbsphinx",
     "pyodide-build==0.34.3; python_version >= '3.12'",
+    "shibuya",
+    "sphinx-copybutton",
+    "sphinx-substitution-extensions",
+    "sphinx-tabs",
     "sphinx>=7.1.2",
     "websockets>=12.0",
 ]

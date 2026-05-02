@@ -51,3 +51,4 @@ orb/metrics/
 .ipynb_checkpoints/
 .claude/
 docs/source/_static/wasm/
+docs/source/.jupyterlite.doit.db

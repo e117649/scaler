@@ -16,7 +16,7 @@
 # Prerequisites:
 #   - .venv is set up (uv pip install -e ".[all]" and dev deps: uv sync --group dev)
 #   - wasm wheel has been built and deployed:
-#       ./build_wasm_wheel.sh
+#       ./scripts/build_wasm.sh
 #   - docs have been built:  cd docs && make html
 #   - tmux is installed
 

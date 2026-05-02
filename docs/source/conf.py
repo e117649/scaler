@@ -60,7 +60,7 @@ templates_path = ["_templates"]
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
 # ``debug_*.ipynb`` are local debug notebooks (e.g. for the wasm/JupyterLite
-# harness in test_jupyterlite.sh) -- they are still served by JupyterLite via
+# harness in scripts/test_jupyterlite.sh) -- they are still served by JupyterLite via
 # ``jupyterlite_contents`` below but should not appear in the published docs.
 exclude_patterns = ["gallery/debug_*.ipynb"]
 
