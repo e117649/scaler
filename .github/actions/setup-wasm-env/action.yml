@@ -36,15 +36,14 @@ runs:
     - name: Install pyodide-build
       shell: bash
       run: |
-        # Version is pinned in pyproject.toml [dependency-groups] dev.
+        # Keep this version in lockstep with the pyodide-build pin in
+        # pyproject.toml's [dependency-groups] dev (and the EMSDK_VERSION
+        # pin in scripts/library_tool.sh). All three move together with the
+        # Pyodide kernel that JupyterLite ships.
+        pip install "pyodide-build==0.34.3"
         # The matching xbuildenv (Pyodide sysroot / lockfile) is installed
-        # without an explicit version so pyodide-build selects the right one.
-        pip install "$(python3 -c "
-import tomllib
-with open('pyproject.toml', 'rb') as f:
-    data = tomllib.load(f)
-print(next(d for d in data['dependency-groups']['dev'] if d.startswith('pyodide-build')))
-")"
+        # without an explicit version so pyodide-build picks the one that
+        # matches the installed package.
         pyodide xbuildenv install
 
     - name: Cache Emscripten SDK
