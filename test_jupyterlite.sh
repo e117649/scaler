@@ -15,25 +15,8 @@
 #
 # Prerequisites:
 #   - .venv is set up (uv pip install -e ".[all]" and dev deps: uv sync --group dev)
-#   - wasm wheel has been built and deployed. THIRD_PARTY_DIR controls where
-#     library_tool.sh writes / reads the wasm chain (defaults to ./thirdparties;
-#     the devcontainer image bakes it at /opt/scaler and exports the var, so
-#     the same commands work in both places):
-#       source "${THIRD_PARTY_DIR:-./thirdparties}/emsdk/emsdk_env.sh"
-#       source .venv/bin/activate
-#       # one-time -- pyodide-build picks the xbuildenv that matches its pin
-#       pyodide xbuildenv install
-#       export CMAKE_PREFIX_PATH="${THIRD_PARTY_DIR:-$PWD/thirdparties}/wasm/install"
-#       export CapnProto_DIR="${CMAKE_PREFIX_PATH}/lib/cmake/CapnProto"
-#       pyodide build . --outdir dist_wasm
-#       # pyodide-build 0.34.x repacks with pyemscripten_2025_0 tag; retag back
-#       # to emscripten_4_0_9 for Pyodide 0.29.3's micropip:
-#       uv pip install wheel && \
-#         python -m wheel tags --python-tag cp313 --abi-tag cp313 \
-#           --platform-tag emscripten_4_0_9_wasm32 \
-#           dist_wasm/opengris_scaler-*pyemscripten*wasm32.whl
-#       mkdir -p docs/build/html/_static/wasm
-#       cp dist_wasm/opengris_scaler-*emscripten_4_0_9*wasm32.whl docs/build/html/_static/wasm/
+#   - wasm wheel has been built and deployed:
+#       ./build_wasm_wheel.sh
 #   - docs have been built:  cd docs && make html
 #   - tmux is installed
 

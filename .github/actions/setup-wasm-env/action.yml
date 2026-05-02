@@ -41,9 +41,8 @@ runs:
         # pin in scripts/library_tool.sh). All three move together with the
         # Pyodide kernel that JupyterLite ships.
         pip install "pyodide-build==0.34.3"
-        # The matching xbuildenv (Pyodide sysroot / lockfile) is installed
-        # without an explicit version so pyodide-build picks the one that
-        # matches the installed package.
+        # Let pyodide-build pick the compatible xbuildenv for the selected
+        # host Python (currently 3.13 in this action).
         pyodide xbuildenv install
 
     - name: Cache Emscripten SDK

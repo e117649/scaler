@@ -16,6 +16,7 @@ eggs/
 .cache
 
 .venv/
+.venv-wasm/
 venv*/
 .vscode/
 .kiro/
