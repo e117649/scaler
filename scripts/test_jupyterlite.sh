@@ -31,7 +31,11 @@ SCHEDULER_WS_PORT=7380    # workers + browser wasm client both use this
 MONITOR_PORT=7381
 DOCS_PORT=8765
 
-OBJECT_STORAGE_ADDR="tcp://127.0.0.1:${OBJECT_STORAGE_PORT}"
+# Object storage is bound on ws:// so the browser wasm client (which can
+# only speak WebSocket) can reach it.  Native workers also speak the same
+# YMQ-over-WebSocket protocol against the same address.
+OBJECT_STORAGE_ADDR="ws://0.0.0.0:${OBJECT_STORAGE_PORT}"
+OBJECT_STORAGE_CLIENT_ADDR="ws://127.0.0.1:${OBJECT_STORAGE_PORT}"
 SCHEDULER_WS_ADDR="ws://0.0.0.0:${SCHEDULER_WS_PORT}"
 SCHEDULER_WS_CLIENT_ADDR="ws://127.0.0.1:${SCHEDULER_WS_PORT}"
 MONITOR_ADDR="tcp://127.0.0.1:${MONITOR_PORT}"
@@ -54,7 +58,7 @@ sleep 1
 # 2. Scheduler — ws:// so both native workers and browser wasm client can connect.
 tmux new-window -t "$SESSION" -n scheduler
 tmux send-keys -t "$SESSION:scheduler" \
-    "source $VENV && scaler_scheduler $SCHEDULER_WS_ADDR -osa $OBJECT_STORAGE_ADDR -ma $MONITOR_ADDR" Enter
+    "source $VENV && scaler_scheduler $SCHEDULER_WS_ADDR -osa $OBJECT_STORAGE_CLIENT_ADDR -ma $MONITOR_ADDR" Enter
 
 sleep 1
 
@@ -89,8 +93,10 @@ echo "  JupyterLite site   : http://localhost:${DOCS_PORT}/lite/lab/index.html"
 echo "  Debug notebook     : http://localhost:${DOCS_PORT}/lite/lab/index.html?path=debug_jupyterlite.ipynb"
 echo ""
 echo "  Scheduler (workers + browser wasm): ${SCHEDULER_WS_CLIENT_ADDR}"
+echo "  Object storage (workers + browser wasm): ${OBJECT_STORAGE_CLIENT_ADDR}"
 echo ""
 echo "  NOTE: set SCHEDULER_ADDRESS = '${SCHEDULER_WS_CLIENT_ADDR}' in the notebook."
+echo "        The scheduler advertises object storage at '${OBJECT_STORAGE_CLIENT_ADDR}'."
 echo "        The wasm wheel must be at docs/build/html/_static/wasm/ before running."
 echo ""
 echo "  To attach to tmux : tmux attach -t $SESSION"

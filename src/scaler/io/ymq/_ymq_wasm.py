@@ -313,6 +313,7 @@ class ConnectorSocket:
 
         # Handshake state.
         self._handshake_complete: bool = False
+        self._magic_consumed: bool = False
         self._remote_identity: Optional[bytes] = None
 
         # Holds JsProxy objects for callbacks so they aren't GC'd before fired.
@@ -543,8 +544,13 @@ class ConnectorSocket:
         try:
             data = event.data
             # data is a JsProxy of an ArrayBuffer (binaryType="arraybuffer").
-            # to_py() converts to a bytes-like object (memoryview).
-            if hasattr(data, "to_py"):
+            # ``to_bytes()`` is the canonical Pyodide JsBuffer → bytes copy and
+            # works for both raw ArrayBuffers and typed-array views. ``to_py()``
+            # on a raw ArrayBuffer does NOT return a byte-shaped memoryview, so
+            # ``bytes(data.to_py())`` would silently produce garbage.
+            if hasattr(data, "to_bytes"):
+                py_data = data.to_bytes()
+            elif hasattr(data, "to_py"):
                 py_data = bytes(data.to_py())
             else:
                 py_data = bytes(memoryview(data))
@@ -578,7 +584,7 @@ class ConnectorSocket:
 
     def _process_recv_buffer(self) -> None:
         # Consume the magic string first.
-        if not self._handshake_complete and self._remote_identity is None:
+        if not self._magic_consumed:
             if len(self._recv_buffer) < len(_MAGIC_STRING):
                 return
             magic = bytes(self._recv_buffer[: len(_MAGIC_STRING)])
@@ -588,6 +594,7 @@ class ConnectorSocket:
                 )
                 return
             del self._recv_buffer[: len(_MAGIC_STRING)]
+            self._magic_consumed = True
 
         # Drain framed messages.
         while True:

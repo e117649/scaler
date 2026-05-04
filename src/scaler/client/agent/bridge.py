@@ -372,9 +372,16 @@ class InProcessAgentBridge(ClientAgentBridge):
 
         async def _wait() -> AddressConfig:
             fut = self._agent._object_storage_address  # noqa: SLF001
-            while not fut.done():
-                await asyncio.sleep(0.01)
-            return fut.result(timeout=0)
+            # ``fut`` is a ``concurrent.futures.Future``. ``asyncio.wrap_future``
+            # adapts it to an awaitable on the current loop without any
+            # polling — the agent task signals completion in the same loop, so
+            # awaiting the wrapped future yields back to asyncio exactly once
+            # and resumes when the future is set. A previous version used
+            # ``while not fut.done(): await asyncio.sleep(0.01)``, which under
+            # ``pyodide.ffi.run_sync`` (JSPI) created a long chain of nested
+            # ``setTimeout`` callbacks and could trigger Pyodide WebLoop
+            # crashes ("memory access out of bounds" / "null function").
+            return await asyncio.wrap_future(fut)
 
         return _run_sync(_wait())
 
