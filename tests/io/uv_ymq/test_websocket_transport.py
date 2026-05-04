@@ -23,6 +23,7 @@ import unittest
 from scaler.cluster.object_storage_server import ObjectStorageServerProcess
 from scaler.config.types.address import AddressConfig
 from scaler.io.ymq import BinderSocket, Bytes, ConnectorSocket, IOContext
+from scaler.utility.identifiers import ObjectID
 
 
 def _free_tcp_port() -> int:
@@ -113,7 +114,7 @@ class WebSocketObjectStorageTest(unittest.TestCase):
             ctx = IOContext()
             connector = YMQSyncObjectStorageConnector(ctx, b"ws-test-client", addr)
 
-            object_id = b"\x00" * 32
+            object_id = ObjectID(b"\x00" * 32)
             payload = b"hello-from-websocket-regression-test"
 
             connector.set_object(object_id, payload)
