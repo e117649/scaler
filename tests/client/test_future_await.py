@@ -166,6 +166,22 @@ class ScalerFutureEmscriptenResultTest(unittest.TestCase):
         threading.Timer(0.05, lambda: fut.set_result("ok")).start()
         self.assertEqual(fut.result(timeout=2), "ok")
 
+    def test_wait_result_ready_swallows_cancellation(self) -> None:
+        """Regression: under emscripten, ``cancel()`` calls
+        ``_wait_result_ready`` to wait for the cancel confirmation. Once the
+        future transitions to cancelled, ``asyncio.wrap_future`` raises
+        ``CancelledError`` — but the native ``Condition.wait`` path returns
+        silently in that case, so callers like ``Client.disconnect()`` ->
+        ``cancel_all_futures()`` must not see the exception bubble up."""
+        import threading
+
+        fut = _make_future()
+        threading.Timer(0.05, fut.set_canceled).start()
+        # Must not raise CancelledError; cancel() returns once the future
+        # has settled.
+        self.assertTrue(fut.cancel(timeout=2))
+        self.assertTrue(fut.cancelled())
+
 
 if __name__ == "__main__":
     unittest.main()

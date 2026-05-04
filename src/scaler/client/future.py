@@ -281,6 +281,14 @@ class ScalerFuture(concurrent.futures.Future):
                     run_sync(_await_done())
                 except asyncio.TimeoutError as exc:
                     raise concurrent.futures.TimeoutError() from exc
+                except (asyncio.CancelledError, concurrent.futures.CancelledError):
+                    # ``asyncio.wrap_future`` raises ``CancelledError`` once
+                    # the underlying ``ScalerFuture`` transitions to
+                    # cancelled. The native ``Condition.wait`` path also
+                    # returns silently in that case (it is just woken up by
+                    # ``notify_all``), so callers like ``cancel()`` only
+                    # care that the future has settled.
+                    pass
             finally:
                 self._condition.acquire()  # type: ignore[attr-defined]
             return
