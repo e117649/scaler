@@ -73,8 +73,12 @@ python -m wheel tags \
     --platform-tag emscripten_4_0_9_wasm32 \
     dist_wasm/opengris_scaler-*pyemscripten*wasm32.whl
 
-# 7. Deploy to docs.
+# 7. Deploy to docs.  Wipe any prior wheels first: ``python -m http.server``
+#    serves the directory listing in alphabetical order, and the JupyterLite
+#    debug notebook picks the first ``opengris_scaler*wasm32.whl`` it sees,
+#    so a leftover older-version wheel would shadow the freshly built one.
 mkdir -p docs/build/html/_static/wasm
+rm -f docs/build/html/_static/wasm/opengris_scaler-*wasm32.whl
 cp dist_wasm/opengris_scaler-*emscripten_4_0_9*wasm32.whl docs/build/html/_static/wasm/
 echo ""
 echo "Wheel deployed to docs/build/html/_static/wasm/"
