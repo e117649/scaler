@@ -507,9 +507,14 @@ class ConnectorSocket:
         try:
             import js  # type: ignore[import-not-found]
 
+            # Allocate a JS Uint8Array of the right size and copy our bytes
+            # into it via Pyodide's ``JsProxy.assign``, which expects a
+            # Python bytes-like (NOT another JsProxy).  Earlier versions
+            # double-wrapped this as ``buf.assign(js.Uint8Array.new(memoryview(data)))``
+            # which tripped Pyodide with
+            # ``a bytes-like object is required, not 'pyodide.ffi.JsProxy'``.
             buf = js.Uint8Array.new(len(data))
-            # Copy bytes into the JS-side buffer via a memoryview.
-            buf.assign(js.Uint8Array.new(memoryview(data)))
+            buf.assign(memoryview(data))
             self._ws.send(buf)
         except Exception as exc:  # noqa: BLE001 — surface JS errors to the caller
             if callback is not None:
