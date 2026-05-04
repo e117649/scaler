@@ -9,6 +9,7 @@ exercise only the await bridge.
 
 import asyncio
 import unittest
+from typing import Any
 from unittest.mock import Mock
 
 from scaler.client.future import ScalerFuture
@@ -82,6 +83,88 @@ class ScalerFutureSyncPathUnaffectedTest(unittest.TestCase):
         fut.set_exception(RuntimeError("x"))
         with self.assertRaises(RuntimeError):
             fut.result(timeout=1)
+
+
+class ScalerFutureEmscriptenResultTest(unittest.TestCase):
+    """Regression test for the wasm deadlock fix in ``_wait_result_ready``.
+
+    Under Pyodide, ``ScalerFuture.result()`` cannot use
+    ``threading.Condition.wait`` because the client agent task runs on the
+    same single-threaded asyncio loop as the caller; blocking the thread
+    would prevent the agent from ever signalling completion.
+
+    The fix takes the ``sys.platform == "emscripten"`` branch and suspends
+    via ``pyodide.ffi.run_sync(asyncio.wrap_future(self))``. These tests
+    monkey-patch ``sys.platform`` and inject a fake ``pyodide.ffi`` module
+    so the behaviour can be exercised on a regular CPython interpreter.
+    """
+
+    def setUp(self) -> None:
+        import sys as _sys
+
+        self._real_platform = _sys.platform
+        # Force ``sys.platform`` to ``"emscripten"`` so ``_wait_result_ready``
+        # takes the JSPI branch.
+        _sys.platform = "emscripten"  # type: ignore[misc]
+
+        # Inject a fake ``pyodide.ffi.run_sync`` that drives the awaitable on
+        # a fresh background-thread asyncio loop. ``asyncio.wrap_future`` is
+        # thread-safe, so completing the future from any thread will resume
+        # the coroutine running inside ``run_sync``.
+        import asyncio as _asyncio
+        import threading as _threading
+        import types as _types
+
+        def _fake_run_sync(awaitable: Any) -> Any:
+            holder: dict = {}
+
+            def _runner() -> None:
+                try:
+                    holder["result"] = _asyncio.new_event_loop().run_until_complete(awaitable)
+                except BaseException as exc:  # noqa: BLE001
+                    holder["error"] = exc
+
+            t = _threading.Thread(target=_runner)
+            t.start()
+            t.join()
+            if "error" in holder:
+                raise holder["error"]
+            return holder.get("result")
+
+        fake_ffi = _types.ModuleType("pyodide.ffi")
+        fake_ffi.run_sync = _fake_run_sync  # type: ignore[attr-defined]
+        fake_pkg = _types.ModuleType("pyodide")
+        fake_pkg.ffi = fake_ffi  # type: ignore[attr-defined]
+
+        self._real_pyodide = _sys.modules.pop("pyodide", None)
+        self._real_pyodide_ffi = _sys.modules.pop("pyodide.ffi", None)
+        _sys.modules["pyodide"] = fake_pkg
+        _sys.modules["pyodide.ffi"] = fake_ffi
+
+    def tearDown(self) -> None:
+        import sys as _sys
+
+        _sys.platform = self._real_platform  # type: ignore[misc]
+        _sys.modules.pop("pyodide", None)
+        _sys.modules.pop("pyodide.ffi", None)
+        if self._real_pyodide is not None:
+            _sys.modules["pyodide"] = self._real_pyodide
+        if self._real_pyodide_ffi is not None:
+            _sys.modules["pyodide.ffi"] = self._real_pyodide_ffi
+
+    def test_result_already_set_returns_without_jspi(self) -> None:
+        fut = _make_future()
+        fut.set_result(7)
+        # ``done()`` short-circuits before any JSPI call.
+        self.assertEqual(fut.result(timeout=1), 7)
+
+    def test_result_set_from_other_thread_unblocks(self) -> None:
+        """Without the fix, ``result()`` would deadlock under emscripten."""
+        import threading
+
+        fut = _make_future()
+        threading.Timer(0.05, lambda: fut.set_result("ok")).start()
+        self.assertEqual(fut.result(timeout=2), "ok")
 
 
 if __name__ == "__main__":

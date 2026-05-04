@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import sys
 from typing import Any, Callable, Optional
 
 from scaler.client.serializer.mixins import Serializer
@@ -253,7 +254,38 @@ class ScalerFuture(concurrent.futures.Future):
 
         Raises a `TimeoutError` if it blocks more than `timeout` seconds.
         """
-        if not self.done() and not self._condition.wait(timeout):
+        if self.done():
+            return
+
+        if sys.platform == "emscripten":
+            # On Pyodide the agent task runs on the same single-threaded
+            # asyncio loop as this caller. ``threading.Condition.wait`` blocks
+            # the only thread, so the agent never gets a chance to run and
+            # signal completion -> deadlock. Instead, suspend the wasm stack
+            # via JSPI while the asyncio loop continues to drive the agent.
+            from pyodide.ffi import run_sync  # type: ignore[import-not-found]
+
+            async def _await_done() -> None:
+                fut: asyncio.Future = asyncio.wrap_future(self)
+                if timeout is None:
+                    await fut
+                else:
+                    await asyncio.wait_for(fut, timeout)
+
+            # ``self._condition`` is held by the caller; release it while we
+            # suspend so the agent (running on the same loop) can acquire it
+            # in ``set_result_ready`` to mark the future done.
+            self._condition.release()  # type: ignore[attr-defined]
+            try:
+                try:
+                    run_sync(_await_done())
+                except asyncio.TimeoutError as exc:
+                    raise concurrent.futures.TimeoutError() from exc
+            finally:
+                self._condition.acquire()  # type: ignore[attr-defined]
+            return
+
+        if not self._condition.wait(timeout):
             raise concurrent.futures.TimeoutError()
 
     def _is_simple_task(self):
