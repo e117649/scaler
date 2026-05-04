@@ -30,66 +30,77 @@ static const char kModMessage[]        = "message";
 static const char kModObjectStorage[] = "object_storage";
 }  // namespace
 
+// Apply the same Pyodide SIDE_MODULE workaround documented above to *type
+// name* literals: bare string literals like "ObjectRequestHeader" can be
+// tail-merged into longer literals in `.rodata.str1.1` and resolve to wrong
+// bytes after wasm relocation. Forcing each name into its own
+// function-scoped `static const char[]` storage prevents the merge.
+#define REG_STRUCT(MOD, T)                                       \
+    do {                                                          \
+        static const char kName_##T[] = #T;                       \
+        registerCompiledSchema<scaler::protocol::T>(MOD, kName_##T); \
+    } while (0)
+
 bool SchemaRegistry::init()
 {
     if (_initialized) {
         return true;
     }
 
-    registerCompiledSchema<scaler::protocol::TaskResultType>(kModCommon, "TaskResultType");
-    registerCompiledSchema<scaler::protocol::TaskCancelConfirmType>(kModCommon, "TaskCancelConfirmType");
-    registerCompiledSchema<scaler::protocol::TaskTransition>(kModCommon, "TaskTransition");
-    registerCompiledSchema<scaler::protocol::TaskState>(kModCommon, "TaskState");
-    registerCompiledSchema<scaler::protocol::WorkerState>(kModCommon, "WorkerState");
-    registerCompiledSchema<scaler::protocol::TaskCapability>(kModCommon, "TaskCapability");
-    registerCompiledSchema<scaler::protocol::ObjectMetadata>(kModCommon, "ObjectMetadata");
-    registerCompiledSchema<scaler::protocol::ObjectStorageAddress>(kModCommon, "ObjectStorageAddress");
+    REG_STRUCT(kModCommon, TaskResultType);
+    REG_STRUCT(kModCommon, TaskCancelConfirmType);
+    REG_STRUCT(kModCommon, TaskTransition);
+    REG_STRUCT(kModCommon, TaskState);
+    REG_STRUCT(kModCommon, WorkerState);
+    REG_STRUCT(kModCommon, TaskCapability);
+    REG_STRUCT(kModCommon, ObjectMetadata);
+    REG_STRUCT(kModCommon, ObjectStorageAddress);
 
-    registerCompiledSchema<scaler::protocol::Resource>(kModStatus, "Resource");
-    registerCompiledSchema<scaler::protocol::ObjectManagerStatus>(kModStatus, "ObjectManagerStatus");
-    registerCompiledSchema<scaler::protocol::ClientManagerStatus>(kModStatus, "ClientManagerStatus");
-    registerCompiledSchema<scaler::protocol::TaskManagerStatus>(kModStatus, "TaskManagerStatus");
-    registerCompiledSchema<scaler::protocol::ProcessorStatus>(kModStatus, "ProcessorStatus");
-    registerCompiledSchema<scaler::protocol::WorkerStatus>(kModStatus, "WorkerStatus");
-    registerCompiledSchema<scaler::protocol::WorkerManagerStatus>(kModStatus, "WorkerManagerStatus");
-    registerCompiledSchema<scaler::protocol::ScalingManagerStatus>(kModStatus, "ScalingManagerStatus");
-    registerCompiledSchema<scaler::protocol::BinderStatus>(kModStatus, "BinderStatus");
+    REG_STRUCT(kModStatus, Resource);
+    REG_STRUCT(kModStatus, ObjectManagerStatus);
+    REG_STRUCT(kModStatus, ClientManagerStatus);
+    REG_STRUCT(kModStatus, TaskManagerStatus);
+    REG_STRUCT(kModStatus, ProcessorStatus);
+    REG_STRUCT(kModStatus, WorkerStatus);
+    REG_STRUCT(kModStatus, WorkerManagerStatus);
+    REG_STRUCT(kModStatus, ScalingManagerStatus);
+    REG_STRUCT(kModStatus, BinderStatus);
 
-    registerCompiledSchema<scaler::protocol::Task>(kModMessage, "Task");
-    registerCompiledSchema<scaler::protocol::TaskCancel>(kModMessage, "TaskCancel");
-    registerCompiledSchema<scaler::protocol::TaskLog>(kModMessage, "TaskLog");
-    registerCompiledSchema<scaler::protocol::TaskResult>(kModMessage, "TaskResult");
-    registerCompiledSchema<scaler::protocol::TaskCancelConfirm>(kModMessage, "TaskCancelConfirm");
-    registerCompiledSchema<scaler::protocol::GraphTask>(kModMessage, "GraphTask");
-    registerCompiledSchema<scaler::protocol::ClientHeartbeat>(kModMessage, "ClientHeartbeat");
-    registerCompiledSchema<scaler::protocol::ClientHeartbeatEcho>(kModMessage, "ClientHeartbeatEcho");
-    registerCompiledSchema<scaler::protocol::WorkerHeartbeat>(kModMessage, "WorkerHeartbeat");
-    registerCompiledSchema<scaler::protocol::WorkerHeartbeatEcho>(kModMessage, "WorkerHeartbeatEcho");
-    registerCompiledSchema<scaler::protocol::WorkerManagerHeartbeat>(kModMessage, "WorkerManagerHeartbeat");
-    registerCompiledSchema<scaler::protocol::WorkerManagerHeartbeatEcho>(kModMessage, "WorkerManagerHeartbeatEcho");
-    registerCompiledSchema<scaler::protocol::WorkerManagerCommandType>(kModMessage, "WorkerManagerCommandType");
-    registerCompiledSchema<scaler::protocol::WorkerManagerCommand>(kModMessage, "WorkerManagerCommand");
-    registerCompiledSchema<scaler::protocol::WorkerManagerCommandResponse>(kModMessage, "WorkerManagerCommandResponse");
-    registerCompiledSchema<scaler::protocol::ObjectInstruction>(kModMessage, "ObjectInstruction");
-    registerCompiledSchema<scaler::protocol::DisconnectRequest>(kModMessage, "DisconnectRequest");
-    registerCompiledSchema<scaler::protocol::DisconnectResponse>(kModMessage, "DisconnectResponse");
-    registerCompiledSchema<scaler::protocol::ClientDisconnect>(kModMessage, "ClientDisconnect");
-    registerCompiledSchema<scaler::protocol::ClientShutdownResponse>(kModMessage, "ClientShutdownResponse");
-    registerCompiledSchema<scaler::protocol::StateClient>(kModMessage, "StateClient");
-    registerCompiledSchema<scaler::protocol::StateObject>(kModMessage, "StateObject");
-    registerCompiledSchema<scaler::protocol::StateBalanceAdvice>(kModMessage, "StateBalanceAdvice");
-    registerCompiledSchema<scaler::protocol::StateScheduler>(kModMessage, "StateScheduler");
-    registerCompiledSchema<scaler::protocol::StateWorker>(kModMessage, "StateWorker");
-    registerCompiledSchema<scaler::protocol::StateTask>(kModMessage, "StateTask");
-    registerCompiledSchema<scaler::protocol::StateGraphTask>(kModMessage, "StateGraphTask");
-    registerCompiledSchema<scaler::protocol::ProcessorInitialized>(kModMessage, "ProcessorInitialized");
-    registerCompiledSchema<scaler::protocol::InformationRequest>(kModMessage, "InformationRequest");
-    registerCompiledSchema<scaler::protocol::InformationResponse>(kModMessage, "InformationResponse");
-    registerCompiledSchema<scaler::protocol::Message>(kModMessage, "Message");
+    REG_STRUCT(kModMessage, Task);
+    REG_STRUCT(kModMessage, TaskCancel);
+    REG_STRUCT(kModMessage, TaskLog);
+    REG_STRUCT(kModMessage, TaskResult);
+    REG_STRUCT(kModMessage, TaskCancelConfirm);
+    REG_STRUCT(kModMessage, GraphTask);
+    REG_STRUCT(kModMessage, ClientHeartbeat);
+    REG_STRUCT(kModMessage, ClientHeartbeatEcho);
+    REG_STRUCT(kModMessage, WorkerHeartbeat);
+    REG_STRUCT(kModMessage, WorkerHeartbeatEcho);
+    REG_STRUCT(kModMessage, WorkerManagerHeartbeat);
+    REG_STRUCT(kModMessage, WorkerManagerHeartbeatEcho);
+    REG_STRUCT(kModMessage, WorkerManagerCommandType);
+    REG_STRUCT(kModMessage, WorkerManagerCommand);
+    REG_STRUCT(kModMessage, WorkerManagerCommandResponse);
+    REG_STRUCT(kModMessage, ObjectInstruction);
+    REG_STRUCT(kModMessage, DisconnectRequest);
+    REG_STRUCT(kModMessage, DisconnectResponse);
+    REG_STRUCT(kModMessage, ClientDisconnect);
+    REG_STRUCT(kModMessage, ClientShutdownResponse);
+    REG_STRUCT(kModMessage, StateClient);
+    REG_STRUCT(kModMessage, StateObject);
+    REG_STRUCT(kModMessage, StateBalanceAdvice);
+    REG_STRUCT(kModMessage, StateScheduler);
+    REG_STRUCT(kModMessage, StateWorker);
+    REG_STRUCT(kModMessage, StateTask);
+    REG_STRUCT(kModMessage, StateGraphTask);
+    REG_STRUCT(kModMessage, ProcessorInitialized);
+    REG_STRUCT(kModMessage, InformationRequest);
+    REG_STRUCT(kModMessage, InformationResponse);
+    REG_STRUCT(kModMessage, Message);
 
-    registerCompiledSchema<scaler::protocol::ObjectRequestHeader>(kModObjectStorage, "ObjectRequestHeader");
-    registerCompiledSchema<scaler::protocol::ObjectID>(kModObjectStorage, "ObjectID");
-    registerCompiledSchema<scaler::protocol::ObjectResponseHeader>(kModObjectStorage, "ObjectResponseHeader");
+    REG_STRUCT(kModObjectStorage, ObjectRequestHeader);
+    REG_STRUCT(kModObjectStorage, ObjectID);
+    REG_STRUCT(kModObjectStorage, ObjectResponseHeader);
 
     for (const auto& schema: _loader.getAllLoaded()) {
         _schemasById.emplace(schema.getProto().getId(), schema);

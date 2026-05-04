@@ -106,7 +106,7 @@ OwnedPyObject<> struct_to_bytes(const char* type_name, PyObject* obj)
     try {
         schema = state->schema_registry.getStructByName(type_name);
     } catch (const std::out_of_range&) {
-        PyErr_SetString(PyExc_KeyError, "unknown Cap'n Proto struct type");
+        PyErr_Format(PyExc_KeyError, "unknown Cap'n Proto struct type: %s", type_name ? type_name : "<null>");
         return {};
     }
 
@@ -136,7 +136,7 @@ OwnedPyObject<> struct_from_bytes(const char* type_name, PyObject* data, unsigne
         schema = state->schema_registry.getStructByName(type_name);
     } catch (const std::out_of_range&) {
         PyBuffer_Release(&buffer);
-        PyErr_SetString(PyExc_KeyError, "unknown Cap'n Proto struct type");
+        PyErr_Format(PyExc_KeyError, "unknown Cap'n Proto struct type: %s", type_name ? type_name : "<null>");
         return {};
     }
 
