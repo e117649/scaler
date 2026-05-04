@@ -69,5 +69,28 @@ PyMODINIT_FUNC PyInit_capnp(void)
     }
     scaler::protocol::pymod::set_initializing_module(nullptr);
 
+    // Defensive: explicitly stamp the fully-qualified __name__ / __package__
+    // on the module. With single-phase init the import system normally
+    // overwrites __name__ from the spec after PyInit_ returns, but Pyodide's
+    // SIDE_MODULE loader path has been observed to leave __name__ as the
+    // bare m_name ("capnp") — which makes ``from scaler.protocol.capnp import X``
+    // synthesize ``.X`` inside _handle_fromlist and recurse into __import__("")
+    // → ValueError("Empty module name"). Same anti-relocator char-array
+    // construction as MODULE_NAME above so the literal cannot be merged into
+    // a section the wasm relocator mis-resolves.
+    static const char FULL_MODULE_NAME[] = {
+        's', 'c', 'a', 'l', 'e', 'r', '.', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l', '.', 'c', 'a', 'p', 'n', 'p', '\0'};
+    static const char PACKAGE_NAME[] = {
+        's', 'c', 'a', 'l', 'e', 'r', '.', 'p', 'r', 'o', 't', 'o', 'c', 'o', 'l', '\0'};
+    static const char NAME_ATTR[]    = {'_', '_', 'n', 'a', 'm', 'e', '_', '_', '\0'};
+    static const char PACKAGE_ATTR[] = {'_', '_', 'p', 'a', 'c', 'k', 'a', 'g', 'e', '_', '_', '\0'};
+    OwnedPyObject<> full_name {PyUnicode_FromString(FULL_MODULE_NAME)};
+    OwnedPyObject<> package_name {PyUnicode_FromString(PACKAGE_NAME)};
+    if (!full_name || !package_name ||
+        PyObject_SetAttrString(module.get(), NAME_ATTR, full_name.get()) < 0 ||
+        PyObject_SetAttrString(module.get(), PACKAGE_ATTR, package_name.get()) < 0) {
+        return nullptr;
+    }
+
     return module.take();
 }
