@@ -358,7 +358,10 @@ class ConnectorSocket:
             "use ConnectorSocket.connect to a remote scheduler instead."
         )
 
-    def send_message(self, callback: SendCallback, message_payload: Bytes) -> None:
+    # Low-level callback API. Mirrors the native ``_ymq.ConnectorSocket``
+    # callback contract; the async / sync wrappers below adapt it to the
+    # surface that ``scaler.io.ymq.sockets`` exposes for the C extension.
+    def send_message_with_callback(self, callback: SendCallback, message_payload: Bytes) -> None:
         if self._closed:
             self._invoke(
                 callback,
@@ -375,7 +378,7 @@ class ConnectorSocket:
 
         self._raw_send(framed, callback)
 
-    def recv_message(self, callback: RecvCallback) -> None:
+    def recv_message_with_callback(self, callback: RecvCallback) -> None:
         if self._recv_queue:
             msg = self._recv_queue.popleft()
             self._invoke(callback, msg)
@@ -390,6 +393,47 @@ class ConnectorSocket:
 
         self._recv_callbacks.append(callback)
 
+    async def send_message(self, message_payload: Bytes) -> None:
+        """Async wrapper around ``send_message_with_callback``.
+
+        Matches the high-level surface that ``scaler.io.ymq.sockets.ConnectorSocket``
+        exposes for the native C extension, so ``YMQAsyncConnector.send`` and
+        friends work uniformly across native and browser backends.
+        """
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+
+        def _cb(result: Any) -> None:
+            if future.done():
+                return
+            if isinstance(result, BaseException):
+                future.set_exception(result)
+            else:
+                future.set_result(None)
+
+        self.send_message_with_callback(_cb, message_payload)
+        await future
+
+    async def recv_message(self) -> Message:
+        """Async wrapper around ``recv_message_with_callback``."""
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+
+        def _cb(result: Any) -> None:
+            if future.done():
+                return
+            if isinstance(result, BaseException):
+                future.set_exception(result)
+            else:
+                future.set_result(result)
+
+        self.recv_message_with_callback(_cb)
+        return await future
+
     def send_message_sync(self, message_payload: Bytes, /, timeout: Optional[float] = None) -> None:
         """Block via JSPI until the message is sent.
 
@@ -398,11 +442,11 @@ class ConnectorSocket:
         while the asyncio loop continues to drive the WebSocket events that
         complete the underlying callback.
         """
-        _drive_callback_sync(lambda cb: self.send_message(cb, message_payload), timeout)
+        _drive_callback_sync(lambda cb: self.send_message_with_callback(cb, message_payload), timeout)
 
     def recv_message_sync(self, /, timeout: Optional[float] = None) -> Message:
         """Block via JSPI until a message is available; mirror of native API."""
-        return _drive_callback_sync(self.recv_message, timeout)
+        return _drive_callback_sync(self.recv_message_with_callback, timeout)
 
     def shutdown(self) -> None:
         if self._closed:

@@ -173,7 +173,7 @@ class HandshakeTest(unittest.TestCase):
         socket = _make_socket()
         _open(socket)
         received: List[Any] = []
-        socket.recv_message(lambda r: received.append(r))
+        socket.recv_message_with_callback(lambda r: received.append(r))
         _feed(socket, _MAGIC + _frame(b"remote-id"))
         self.assertEqual(received, [])  # no message yet
         self.assertEqual(socket._remote_identity, b"remote-id")
@@ -183,7 +183,7 @@ class HandshakeTest(unittest.TestCase):
         socket = _make_socket()
         _open(socket)
         received: List[Any] = []
-        socket.recv_message(lambda r: received.append(r))
+        socket.recv_message_with_callback(lambda r: received.append(r))
         _feed(socket, b"BAD!" + _frame(b"id"))
         self.assertEqual(len(received), 1)
         self.assertIsInstance(received[0], YMQException)
@@ -201,7 +201,7 @@ class FramingTest(unittest.TestCase):
         socket = _make_socket()
         _open(socket)
         socket._ws.sent.clear()
-        socket.send_message(lambda r: None, Bytes(b"hello"))
+        socket.send_message_with_callback(lambda r: None, Bytes(b"hello"))
         self.assertEqual(len(socket._ws.sent), 1)
         self.assertEqual(socket._ws.sent[0], _frame(b"hello"))
 
@@ -209,7 +209,7 @@ class FramingTest(unittest.TestCase):
         socket = _make_socket()
         # Don't call _open yet
         cb_results: List[Any] = []
-        socket.send_message(cb_results.append, Bytes(b"q"))
+        socket.send_message_with_callback(cb_results.append, Bytes(b"q"))
         self.assertEqual(socket._ws.sent, [])
         self.assertEqual(cb_results, [])
         _open(socket)
@@ -221,7 +221,7 @@ class FramingTest(unittest.TestCase):
     def test_recv_delivers_after_handshake(self) -> None:
         socket = self._open_handshaken()
         received: List[Any] = []
-        socket.recv_message(received.append)
+        socket.recv_message_with_callback(received.append)
         _feed(socket, _frame(b"payload-1"))
         self.assertEqual(len(received), 1)
         self.assertIsInstance(received[0], Message)
@@ -231,14 +231,14 @@ class FramingTest(unittest.TestCase):
         socket = self._open_handshaken()
         _feed(socket, _frame(b"early"))
         received: List[Any] = []
-        socket.recv_message(received.append)
+        socket.recv_message_with_callback(received.append)
         self.assertEqual(len(received), 1)
         self.assertEqual(received[0].payload.data, b"early")
 
     def test_split_frame_is_reassembled(self) -> None:
         socket = self._open_handshaken()
         received: List[Any] = []
-        socket.recv_message(received.append)
+        socket.recv_message_with_callback(received.append)
         full = _frame(b"reassembled-payload")
         # Feed in chunks of 1 byte.
         for i in range(len(full)):
@@ -249,16 +249,16 @@ class FramingTest(unittest.TestCase):
     def test_multiple_messages_in_single_chunk(self) -> None:
         socket = self._open_handshaken()
         received: List[Any] = []
-        socket.recv_message(received.append)
-        socket.recv_message(received.append)
-        socket.recv_message(received.append)
+        socket.recv_message_with_callback(received.append)
+        socket.recv_message_with_callback(received.append)
+        socket.recv_message_with_callback(received.append)
         _feed(socket, _frame(b"a") + _frame(b"bb") + _frame(b"ccc"))
         self.assertEqual([m.payload.data for m in received], [b"a", b"bb", b"ccc"])
 
     def test_zero_length_message(self) -> None:
         socket = self._open_handshaken()
         received: List[Any] = []
-        socket.recv_message(received.append)
+        socket.recv_message_with_callback(received.append)
         _feed(socket, _frame(b""))
         self.assertEqual(len(received), 1)
         self.assertEqual(received[0].payload.data, b"")
@@ -267,7 +267,7 @@ class FramingTest(unittest.TestCase):
         socket = _make_socket()
         _open(socket)
         received: List[Any] = []
-        socket.recv_message(received.append)
+        socket.recv_message_with_callback(received.append)
         _feed(socket, _MAGIC + _frame(b"remote") + _frame(b"first"))
         self.assertEqual(len(received), 1)
         self.assertEqual(received[0].payload.data, b"first")
@@ -279,8 +279,8 @@ class ShutdownTest(unittest.TestCase):
         _open(socket)
         recv_results: List[Any] = []
         send_results: List[Any] = []
-        socket.recv_message(recv_results.append)
-        socket.send_message(send_results.append, Bytes(b"x"))  # immediate send (open)
+        socket.recv_message_with_callback(recv_results.append)
+        socket.send_message_with_callback(send_results.append, Bytes(b"x"))  # immediate send (open)
         # Queue another send AFTER closing the underlying ws to test pending path.
         socket.shutdown()
         self.assertTrue(socket._ws.closed)
@@ -290,7 +290,7 @@ class ShutdownTest(unittest.TestCase):
     def test_shutdown_fails_pending_sends(self) -> None:
         socket = _make_socket()  # NOT opened yet
         send_results: List[Any] = []
-        socket.send_message(send_results.append, Bytes(b"x"))
+        socket.send_message_with_callback(send_results.append, Bytes(b"x"))
         socket.shutdown()
         self.assertEqual(len(send_results), 1)
         self.assertIsInstance(send_results[0], SocketStopRequestedError)
@@ -300,7 +300,7 @@ class ShutdownTest(unittest.TestCase):
         _open(socket)
         socket.shutdown()
         results: List[Any] = []
-        socket.send_message(results.append, Bytes(b"x"))
+        socket.send_message_with_callback(results.append, Bytes(b"x"))
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0], SocketStopRequestedError)
 
@@ -309,7 +309,7 @@ class ShutdownTest(unittest.TestCase):
         _open(socket)
         socket.shutdown()
         results: List[Any] = []
-        socket.recv_message(results.append)
+        socket.recv_message_with_callback(results.append)
         self.assertEqual(len(results), 1)
         # Buffered close error is SocketStopRequested when shutdown was explicit.
         self.assertIsInstance(results[0], YMQException)
@@ -320,7 +320,7 @@ class RemoteCloseTest(unittest.TestCase):
         socket = _make_socket()
         _open(socket)
         results: List[Any] = []
-        socket.recv_message(results.append)
+        socket.recv_message_with_callback(results.append)
 
         class _Evt:
             code = 1006
@@ -344,7 +344,7 @@ class RemoteCloseTest(unittest.TestCase):
         # The buffered message was queued before close; recv_message should see
         # it ahead of the close error.
         results: List[Any] = []
-        socket.recv_message(results.append)
+        socket.recv_message_with_callback(results.append)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].payload.data, b"buffered")
 
