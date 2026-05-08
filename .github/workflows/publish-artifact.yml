@@ -86,6 +86,10 @@ jobs:
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
+    # PyPI publishing requires the upstream `release` environment + trusted-publisher
+    # config. Skip this job on forks so the rest of the release flow (wasm wheel
+    # upload) still succeeds.
+    if: github.repository == 'finos/opengris-scaler'
     environment: release
     permissions:
       id-token: write
