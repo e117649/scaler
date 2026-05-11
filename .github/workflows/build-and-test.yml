@@ -2,9 +2,10 @@ name: "Build And Test"
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "wasm-test" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 permissions:
   contents: read
