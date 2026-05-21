@@ -12,6 +12,7 @@ jobs:
     name: Build wheels (${{ matrix.os }}, ${{ matrix.cibw_archs }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -19,8 +20,11 @@ jobs:
           # TODO: re-enable after fixing QEMU exec format error
           # - os: ubuntu-latest
           #   cibw_archs: aarch64
-          - os: windows-latest
-            cibw_archs: AMD64
+          # TODO: temporarily disabled — separate PR is reworking the Windows
+          # build; re-enable after that lands. The MSBuild "py_object_storage_server.vcxproj"
+          # missing-file error currently fails the whole matrix.
+          # - os: windows-latest
+          #   cibw_archs: AMD64
           - os: macos-latest
             cibw_archs: native
           - os: macos-15-intel
@@ -86,6 +90,10 @@ jobs:
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
+    # PyPI publishing requires the upstream `release` environment + trusted-publisher
+    # config. Skip this job on forks so the rest of the release flow (wasm wheel
+    # upload) still succeeds.
+    if: github.repository == 'finos/opengris-scaler'
     environment: release
     permissions:
       id-token: write
