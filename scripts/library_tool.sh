@@ -259,17 +259,8 @@ elif [ "$1" == "openssl" ]; then
 
         cd "${THIRD_PARTY_COMPILED}/${OPENSSL_FOLDER_NAME}"
         # -fPIC: the static libcrypto/libssl are linked into the _ymq.so shared module, so their objects
-        # must be position-independent (matching capnp/libuv's CMAKE_POSITION_INDEPENDENT_CODE=ON).
-        openssl_config_flags=(--prefix="${PREFIX}" --libdir=lib no-tests no-shared -fPIC)
-        # OpenSSL 4.0.0's poly1305 armv8 asm takes the address of the global poly1305_blocks_sve2 with a
-        # direct ADRP but never marks it .hidden (its siblings poly1305_blocks/_emit are), so the
-        # relocation cannot go into a shared object -- an assembly-level bug no compiler flag fixes. It
-        # breaks the static->_ymq.so link on Linux aarch64 (ELF); macOS arm64 uses Mach-O and is
-        # unaffected. Drop asm there so the pure-C build links; every other target keeps accelerated asm.
-        if [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "aarch64" ]]; then
-            openssl_config_flags+=(no-asm)
-        fi
-        ./config "${openssl_config_flags[@]}"
+        # (including OpenSSL's aarch64 asm) must be position-independent
+        ./config --prefix="${PREFIX}" --libdir=lib no-tests no-shared -fPIC
         make -j "${NUM_CORES}"
         echo "Compiled OpenSSL to ${THIRD_PARTY_COMPILED}/${OPENSSL_FOLDER_NAME}"
 
