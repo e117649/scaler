@@ -4,7 +4,9 @@ from collections import deque
 from typing import Any, Awaitable, Callable, Deque, Dict, List, Optional, Tuple
 
 from scaler.io.mixins import AsyncBinder, AsyncPublisher
+from scaler.io.ymq import ConnectorSocketClosedByRemoteEndError
 from scaler.protocol.capnp import (
+    BaseMessage,
     StateTask,
     Task,
     TaskCancel,
@@ -220,7 +222,8 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         assert state_machine.current_state() == TaskState.running
 
         task = self._task_id_to_task[task_id]
-        await self._binder.send(worker_id, task)
+        if not await self.__send_to_worker(worker_id, task):
+            return
         await self.__send_monitor(task_id, self._object_controller.get_object_name(task.funcObjectId))
 
     async def __state_canceling(
@@ -329,7 +332,8 @@ class VanillaTaskController(TaskController, Looper, Reporter):
             )
             return
 
-        await self._binder.send(worker, task_cancel)
+        if not await self.__send_to_worker(worker, task_cancel):
+            return
         await self.__send_monitor(task_cancel.taskId, b"")
 
     async def __send_task_result_to_client(self, task_result: TaskResult):
@@ -389,6 +393,24 @@ class VanillaTaskController(TaskController, Looper, Reporter):
                 metadata=metadata,
             )
         )
+
+    async def __send_to_worker(self, worker_id: WorkerID, message: BaseMessage) -> bool:
+        """Send to a worker, returning False if the worker had already departed.
+
+        A worker can vanish at any moment (pod eviction, crash), and the closed socket only surfaces
+        here, on the send. Treat that as the worker departing: hand it to the worker controller so its
+        tasks reroute through the normal disconnect path (rather than waiting out the heartbeat
+        timeout). Swallowing it is also what keeps the scheduler alive -- raised from the balancer's
+        own loop (not the binder receive loop) it would propagate through asyncio.gather and tear the
+        whole scheduler down.
+        """
+        try:
+            await self._binder.send(worker_id, message)
+            return True
+        except ConnectorSocketClosedByRemoteEndError:
+            logger.info(f"{worker_id!r}: send failed, worker departed; rerouting its tasks")
+            await self._worker_controller.on_worker_departed(worker_id)
+            return False
 
     async def __routing(self, task_id: TaskID, transition: TaskTransition, **kwargs):
         state_machine = self._task_state_manager.on_transition(task_id, transition)

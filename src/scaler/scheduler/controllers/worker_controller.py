@@ -104,6 +104,9 @@ class VanillaWorkerController(WorkerController, Looper, Reporter):
         await self.__disconnect_worker(request.worker)
         await self._binder.send(worker_id, DisconnectResponse(worker=request.worker))
 
+    async def on_worker_departed(self, worker_id: WorkerID):
+        await self.__disconnect_worker(worker_id)
+
     async def routine(self):
         await self.__clean_workers()
 
