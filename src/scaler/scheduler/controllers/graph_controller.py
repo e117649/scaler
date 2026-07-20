@@ -1,10 +1,12 @@
 import asyncio
 import dataclasses
 import enum
+import logging
 from asyncio import Queue
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 from scaler.io.mixins import AsyncBinder, AsyncObjectStorageConnector, AsyncPublisher
+from scaler.io.ymq import ConnectorSocketClosedByRemoteEndError
 from scaler.protocol.capnp import (
     GraphTask,
     ObjectMetadata,
@@ -23,6 +25,8 @@ from scaler.utility.graph.topological_sorter import TopologicalSorter
 from scaler.utility.identifiers import ClientID, ObjectID, TaskID
 from scaler.utility.many_to_many_dict import ManyToManyDict
 from scaler.utility.mixins import Looper, Reporter
+
+logger = logging.getLogger(__name__)
 
 
 class _NodeTaskState(enum.Enum):
@@ -154,7 +158,13 @@ class VanillaGraphTaskController(GraphTaskController, Looper, Reporter):
 
     async def routine(self):
         client, graph_task = await self._unassigned.get()
-        await self.__add_new_graph(client, graph_task)
+        try:
+            await self.__add_new_graph(client, graph_task)
+        except ConnectorSocketClosedByRemoteEndError:
+            # A trivially-complete graph delivers its result to the client here; if that client has
+            # departed the send fails, and on this timer loop letting it propagate would tear the
+            # scheduler down. Worker sends for real subtasks reroute earlier (in __send_to_worker).
+            logger.info(f"{client!r}: departed while adding graph, dropping undeliverable result")
 
     def get_status(self) -> Dict:
         return {"graph_manager": {"unassigned": self._unassigned.qsize()}}
