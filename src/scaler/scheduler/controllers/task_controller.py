@@ -420,6 +420,13 @@ class VanillaTaskController(TaskController, Looper, Reporter):
 
         try:
             await self._state_functions[state_machine.current_state()](task_id, state_machine, **kwargs)  # noqa
+        except ConnectorSocketClosedByRemoteEndError:
+            # A peer departed mid-transition. Worker sends already reroute via __send_to_worker; this
+            # additionally covers delivering a result/cancel-confirm to a client that has gone. The
+            # message is undeliverable, so drop it -- and it must not be fatal: raised from a timer loop
+            # (balancer/cleanup) rather than the binder receive loop, re-raising would propagate through
+            # asyncio.gather and tear the whole scheduler down.
+            logger.info(f"{task_id!r}: peer departed during {transition}, dropping undeliverable message")
         except Exception as e:
             logger.exception(
                 f"{task_id!r}: exception happened, transition: {transition} path: {state_machine.get_path()}"
