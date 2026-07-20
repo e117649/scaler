@@ -3,6 +3,8 @@ import enum
 import logging
 from typing import Awaitable, Callable, Optional
 
+from scaler.io.ymq import ConnectorSocketClosedByRemoteEndError
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,7 +50,17 @@ def create_async_loop_routine(routine: Callable[[], Awaitable], seconds: int):
         logger.info(f"{routine.__self__.__class__.__name__}: started")  # type: ignore[attr-defined]
         try:
             while True:
-                await routine()
+                try:
+                    await routine()
+                except ConnectorSocketClosedByRemoteEndError:
+                    # A peer departed and this routine's send raced the disconnect. Same policy as the
+                    # binder receive loop: peer-gone is routine, handled by the controllers' own
+                    # timeout/cleanup paths. Swallow per-iteration so it never escapes to asyncio.gather
+                    # (which would tear the whole scheduler/agent down); the loop keeps running. A real
+                    # peer death is still caught by the heartbeat-based timeouts, not by this send error.
+                    logger.info(
+                        f"{routine.__self__.__class__.__name__}: peer departed mid-routine, continuing"  # type: ignore[attr-defined]
+                    )
                 await asyncio.sleep(seconds)
         except asyncio.CancelledError:
             pass
