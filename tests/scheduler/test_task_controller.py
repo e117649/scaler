@@ -3,9 +3,9 @@ import unittest
 from unittest.mock import MagicMock
 
 from scaler.io.ymq import ConnectorSocketClosedByRemoteEndError, ErrorCode
-from scaler.protocol.capnp import TaskState, TaskTransition
+from scaler.protocol.capnp import TaskCancelConfirm, TaskCancelConfirmType, TaskState, TaskTransition
 from scaler.scheduler.controllers.task_controller import VanillaTaskController
-from scaler.utility.identifiers import TaskID
+from scaler.utility.identifiers import TaskID, WorkerID
 
 
 def _run(coro):
@@ -51,6 +51,32 @@ class TestTaskControllerRoutingResilience(unittest.TestCase):
         # A genuine bug must still surface (the backstop is narrow, only for the departed-peer error).
         with self.assertRaises(ValueError):
             self._drive_running_handler_raising(controller, TaskID(b"real-bug-task"), ValueError("real bug"))
+
+    def test_worker_disconnect_while_canceling_supplies_cancel_confirm(self):
+        """A canceling task whose worker disconnects must reach __state_canceled with a TaskCancelConfirm,
+        not a worker_id, or the canceling -> canceled transition raises TypeError."""
+        controller = self._controller()
+        task_id = TaskID(b"canceling-task")
+
+        state_machine = controller._task_state_manager.add_state_machine(task_id)
+        state_machine.on_transition(TaskTransition.hasCapacity)  # inactive -> running
+        state_machine.on_transition(TaskTransition.taskCancel)  # running -> canceling
+        self.assertEqual(state_machine.current_state(), TaskState.canceling)
+
+        captured = {}
+
+        async def fake_canceled(_task_id, _state_machine, task_cancel_confirm):  # __state_canceled's signature
+            captured["confirm"] = task_cancel_confirm
+
+        controller._state_functions[TaskState.canceled] = fake_canceled
+
+        # Must not raise: pre-fix this handed __state_canceled worker_id and raised TypeError.
+        _run(controller.on_worker_disconnect(task_id, WorkerID(b"dead-worker")))
+
+        self.assertEqual(state_machine.current_state(), TaskState.canceled)
+        self.assertIsInstance(captured.get("confirm"), TaskCancelConfirm)
+        self.assertEqual(captured["confirm"].taskId, task_id)
+        self.assertEqual(captured["confirm"].cancelConfirmType, TaskCancelConfirmType.canceled)
 
 
 if __name__ == "__main__":

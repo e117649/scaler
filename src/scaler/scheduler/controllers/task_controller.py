@@ -182,6 +182,17 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         await self.__retry_unassignable()
 
     async def on_worker_disconnect(self, task_id: TaskID, worker_id: WorkerID):
+        state_machine = self._task_state_manager.get_state_machine(task_id)
+        if state_machine is not None and state_machine.current_state() == TaskState.canceling:
+            # canceling routes workerDisconnect to canceled, whose handler takes a TaskCancelConfirm, not
+            # the worker_id the workerDisconnecting targets take.
+            await self.__routing(
+                task_id,
+                TaskTransition.workerDisconnect,
+                task_cancel_confirm=TaskCancelConfirm(taskId=task_id, cancelConfirmType=TaskCancelConfirmType.canceled),
+            )
+            return
+
         await self.__routing(task_id, TaskTransition.workerDisconnect, worker_id=worker_id)
 
     def get_status(self) -> TaskManagerStatus:
