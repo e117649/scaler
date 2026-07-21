@@ -199,15 +199,19 @@ class VanillaWorkerController(WorkerController, Looper, Reporter):
             return
 
         logger.info(f"{worker_id!r} disconnected")
-        await self._binder_monitor.send(
-            StateWorker(workerId=worker_id, state=WorkerState.disconnected, capabilities=[])
-        )
+        # Drop the worker from local state before any await: on a backend whose monitor send yields (ZMQ),
+        # a second disconnect of the same worker could otherwise pass the guard above and pop() a
+        # now-missing id. Removing first keeps the guard-and-remove atomic.
         self._worker_alive_since.pop(worker_id)
         manager_id = self._worker_to_manager.pop(worker_id)
         workers_set = self._manager_to_workers[manager_id]
         workers_set.discard(worker_id)
         if not workers_set:
             del self._manager_to_workers[manager_id]
+
+        await self._binder_monitor.send(
+            StateWorker(workerId=worker_id, state=WorkerState.disconnected, capabilities=[])
+        )
 
         task_ids = self._policy_controller.remove_worker(worker_id)
         if not task_ids:
