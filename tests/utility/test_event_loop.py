@@ -30,7 +30,10 @@ class TestCreateAsyncLoopRoutine(unittest.TestCase):
                 raise asyncio.CancelledError()  # normal shutdown path; ends the loop once we've proven it continued
 
         routine = _Routine(behavior)
-        asyncio.new_event_loop().run_until_complete(create_async_loop_routine(routine.routine, 0))
+        # swallow_peer_departed=True is the scheduler's mode: a departed peer must not kill the loop.
+        asyncio.new_event_loop().run_until_complete(
+            create_async_loop_routine(routine.routine, 0, swallow_peer_departed=True)
+        )
 
         self.assertEqual(routine.calls, 3, "the loop must run again after a departed-peer send, not die on it")
 
@@ -41,6 +44,17 @@ class TestCreateAsyncLoopRoutine(unittest.TestCase):
 
         routine = _Routine(behavior)
         with self.assertRaises(ValueError):
+            asyncio.new_event_loop().run_until_complete(create_async_loop_routine(routine.routine, 0))
+
+    def test_departed_peer_error_propagates_by_default(self):
+        # Default (swallow_peer_departed=False) is the client/worker agent mode: their single peer is the
+        # scheduler, so a departed-peer error must propagate for the agent to surface a clear disconnect,
+        # not be swallowed into an endless loop against a dead connection.
+        def behavior(_call_number: int) -> None:
+            raise ConnectorSocketClosedByRemoteEndError(ErrorCode.ConnectorSocketClosedByRemoteEnd, "peer gone")
+
+        routine = _Routine(behavior)
+        with self.assertRaises(ConnectorSocketClosedByRemoteEndError):
             asyncio.new_event_loop().run_until_complete(create_async_loop_routine(routine.routine, 0))
 
 
