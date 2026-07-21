@@ -120,14 +120,20 @@ class VanillaGraphTaskController(GraphTaskController, Looper, Reporter):
         await self._unassigned.put((client_id, graph_task))
 
     async def on_graph_task_cancel(self, task_cancel: TaskCancel):
-        graph_task_id = self._task_id_to_graph_task_id[task_cancel.taskId]
+        graph_task_id = self._task_id_to_graph_task_id.get(task_cancel.taskId)
+        if graph_task_id is None or graph_task_id not in self._graph_task_id_to_graph:
+            return
 
         # received any subtask canceling will lead the whole graph canceling
         await self.__cancel_whole_graph(graph_task_id)
 
     async def on_graph_sub_task_result(self, result: TaskResult):
+        graph_info = self.__graph_for_subtask(result.taskId)
+        if graph_info is None:
+            # A late result for a subtask whose graph has already finished/cancelled and been cleaned up.
+            # Indexing the maps directly here would KeyError, and on this path that tears the scheduler down.
+            return
         graph_task_id = self._task_id_to_graph_task_id[result.taskId]
-        graph_info = self._graph_task_id_to_graph[graph_task_id]
 
         if graph_info.status == _GraphState.Canceling:
             # there will be case when we are canceling the whole graph, and at the moment, result is returning
@@ -147,14 +153,25 @@ class VanillaGraphTaskController(GraphTaskController, Looper, Reporter):
         await self.__abort_whole_graph(graph_task_id, result)
 
     async def on_graph_sub_task_cancel_confirm(self, task_cancel_confirm: TaskCancelConfirm):
+        graph_info = self.__graph_for_subtask(task_cancel_confirm.taskId)
+        if graph_info is None:
+            # A late cancel-confirm for a subtask whose graph has already been cleaned up.
+            return
         graph_task_id = self._task_id_to_graph_task_id[task_cancel_confirm.taskId]
-        graph_info = self._graph_task_id_to_graph[graph_task_id]
         self.__mark_node_canceled(graph_info, task_cancel_confirm)
 
         await self.__cancel_whole_graph(graph_task_id)
 
     def is_graph_subtask(self, task_id: TaskID):
         return task_id in self._task_id_to_graph_task_id
+
+    def __graph_for_subtask(self, task_id: TaskID) -> Optional[_Graph]:
+        """The graph a subtask belongs to, or None if the subtask or its graph has already been cleaned up
+        (a subtask id can linger in the id map as an orphan after its graph is popped)."""
+        graph_task_id = self._task_id_to_graph_task_id.get(task_id)
+        if graph_task_id is None:
+            return None
+        return self._graph_task_id_to_graph.get(graph_task_id)
 
     async def routine(self):
         client, graph_task = await self._unassigned.get()
