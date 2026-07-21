@@ -66,9 +66,8 @@ def create_async_loop_routine(routine: Callable[[], Awaitable], seconds: int, sw
                     # binder receive loop: peer-gone is routine, handled by the controllers' own
                     # timeout/cleanup paths. A real peer death is still caught by the heartbeat-based
                     # timeouts, not by this send error.
-                    logger.info(
-                        f"{routine.__self__.__class__.__name__}: peer departed mid-routine, continuing"  # type: ignore[attr-defined]
-                    )
+                    routine_owner = routine.__self__.__class__.__name__  # type: ignore[attr-defined]
+                    logger.info(f"{routine_owner}: peer departed mid-routine, continuing")
                 await asyncio.sleep(seconds)
         except asyncio.CancelledError:
             pass
