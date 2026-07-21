@@ -356,7 +356,7 @@ class VanillaTaskController(TaskController, Looper, Reporter):
                 f"(likely disconnected via client_timeout_seconds while the task was running)"
             )
         else:
-            await self._binder.send(client, task_result)
+            await self.__send_to_client(client, task_result)
 
         func_name = b""
         task = self._task_id_to_task.get(task_result.taskId)
@@ -380,7 +380,7 @@ class VanillaTaskController(TaskController, Looper, Reporter):
                 f"longer registered"
             )
         else:
-            await self._binder.send(client, task_cancel_confirm)
+            await self.__send_to_client(client, task_cancel_confirm)
         await self.__send_monitor(task_cancel_confirm.taskId, b"")
         self._task_state_manager.remove_state_machine(task_cancel_confirm.taskId)
         self._task_id_to_task.pop(task_cancel_confirm.taskId)
@@ -422,6 +422,20 @@ class VanillaTaskController(TaskController, Looper, Reporter):
             logger.info(f"{worker_id!r}: send failed, worker departed; rerouting its tasks")
             await self._worker_controller.on_worker_departed(worker_id)
             return False
+
+    async def __send_to_client(self, client_id: ClientID, message: BaseMessage) -> None:
+        """Deliver a result/cancel-confirm to a client, dropping it if the client has departed.
+
+        Swallowing the departed-client error HERE (rather than letting it raise out to __routing) is what
+        keeps the caller's cleanup running -- remove_state_machine, _task_id_to_task.pop and, critically,
+        __retry_unassignable. If it escaped, a client killed while its tasks are completing would leave
+        those tasks' state machines in limbo and, because the retry is skipped, freed workers would never
+        be handed the queued tasks, wedging the scheduler.
+        """
+        try:
+            await self._binder.send(client_id, message)
+        except ConnectorSocketClosedByRemoteEndError:
+            logger.info(f"{client_id!r}: departed, dropping undeliverable task message")
 
     async def __routing(self, task_id: TaskID, transition: TaskTransition, **kwargs):
         state_machine = self._task_state_manager.on_transition(task_id, transition)
