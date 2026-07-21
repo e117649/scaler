@@ -111,9 +111,7 @@ class TestTaskControllerDepartedClientCleanup(unittest.TestCase):
 
         binder = MagicMock()
         binder.send = AsyncMock(
-            side_effect=ConnectorSocketClosedByRemoteEndError(
-                ErrorCode.ConnectorSocketClosedByRemoteEnd, "client gone"
-            )
+            side_effect=ConnectorSocketClosedByRemoteEndError(ErrorCode.ConnectorSocketClosedByRemoteEnd, "client gone")
         )
         binder_monitor = MagicMock()
         binder_monitor.send = AsyncMock()

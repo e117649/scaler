@@ -267,9 +267,15 @@ class Scheduler:
                 self._config_controller.get_config("load_balance_seconds"),
                 swallow_peer_departed=True,
             ),
-            create_async_loop_routine(self._client_manager.routine, CLEANUP_INTERVAL_SECONDS, swallow_peer_departed=True),
-            create_async_loop_routine(self._object_controller.routine, CLEANUP_INTERVAL_SECONDS, swallow_peer_departed=True),
-            create_async_loop_routine(self._worker_controller.routine, CLEANUP_INTERVAL_SECONDS, swallow_peer_departed=True),
+            create_async_loop_routine(
+                self._client_manager.routine, CLEANUP_INTERVAL_SECONDS, swallow_peer_departed=True
+            ),
+            create_async_loop_routine(
+                self._object_controller.routine, CLEANUP_INTERVAL_SECONDS, swallow_peer_departed=True
+            ),
+            create_async_loop_routine(
+                self._worker_controller.routine, CLEANUP_INTERVAL_SECONDS, swallow_peer_departed=True
+            ),
             create_async_loop_routine(
                 self._worker_manager_controller.routine, CLEANUP_INTERVAL_SECONDS, swallow_peer_departed=True
             ),
