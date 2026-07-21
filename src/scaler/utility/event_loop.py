@@ -35,12 +35,19 @@ def register_event_loop(event_loop_type: str):
     logger.info(f"use event loop: {event_loop_type}")
 
 
-def create_async_loop_routine(routine: Callable[[], Awaitable], seconds: int):
+def create_async_loop_routine(routine: Callable[[], Awaitable], seconds: int, swallow_peer_departed: bool = False):
     """create async loop routine,
 
     - if seconds is negative, means disable
     - 0 means looping without any wait, as fast as possible
-    - positive number means execute routine every positive seconds, if passing 1 means run once every 1 seconds"""
+    - positive number means execute routine every positive seconds, if passing 1 means run once every 1 seconds
+
+    swallow_peer_departed: when True, a ConnectorSocketClosedByRemoteEndError raised by the routine is
+    swallowed per-iteration and the loop keeps running. This is for the SCHEDULER, whose timer loops send
+    to many peers (workers/clients) that come and go: one departed peer must not escape to asyncio.gather
+    and tear the whole scheduler down. It must stay False for the client/worker agents -- there the error
+    means their single scheduler peer is gone, and it needs to propagate so the agent can surface a clear
+    disconnect (e.g. DisconnectedError) instead of silently looping against a dead connection."""
 
     async def loop():
         if seconds < 0:
@@ -53,11 +60,12 @@ def create_async_loop_routine(routine: Callable[[], Awaitable], seconds: int):
                 try:
                     await routine()
                 except ConnectorSocketClosedByRemoteEndError:
+                    if not swallow_peer_departed:
+                        raise
                     # A peer departed and this routine's send raced the disconnect. Same policy as the
                     # binder receive loop: peer-gone is routine, handled by the controllers' own
-                    # timeout/cleanup paths. Swallow per-iteration so it never escapes to asyncio.gather
-                    # (which would tear the whole scheduler/agent down); the loop keeps running. A real
-                    # peer death is still caught by the heartbeat-based timeouts, not by this send error.
+                    # timeout/cleanup paths. A real peer death is still caught by the heartbeat-based
+                    # timeouts, not by this send error.
                     logger.info(
                         f"{routine.__self__.__class__.__name__}: peer departed mid-routine, continuing"  # type: ignore[attr-defined]
                     )
