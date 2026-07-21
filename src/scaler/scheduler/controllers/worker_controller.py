@@ -1,6 +1,7 @@
 import logging
 import time
-from typing import Dict, List, Optional, Set, Tuple
+from collections import deque
+from typing import Deque, Dict, List, Optional, Set, Tuple
 
 from scaler.io.mixins import AsyncBinder, AsyncPublisher
 from scaler.protocol.capnp import (
@@ -42,6 +43,9 @@ class VanillaWorkerController(WorkerController, Looper, Reporter):
         self._worker_to_manager: Dict[WorkerID, bytes] = dict()
         self._manager_to_workers: Dict[bytes, Set[WorkerID]] = dict()
         self._policy_controller = policy_controller
+
+        self._departed_worker_queue: Deque[WorkerID] = deque()
+        self._draining_departed_workers: bool = False
 
     def register(self, binder: AsyncBinder, binder_monitor: AsyncPublisher, task_controller: TaskController):
         self._binder = binder
@@ -105,7 +109,19 @@ class VanillaWorkerController(WorkerController, Looper, Reporter):
         await self._binder.send(worker_id, DisconnectResponse(worker=request.worker))
 
     async def on_worker_departed(self, worker_id: WorkerID):
-        await self.__disconnect_worker(worker_id)
+        # A failed send reports a worker departed; disconnecting it reroutes its tasks, which can hit
+        # further just-departed workers. Draining iteratively instead of recursing keeps a mass eviction
+        # from growing the coroutine stack until it hits the recursion limit and crashes the scheduler.
+        self._departed_worker_queue.append(worker_id)
+        if self._draining_departed_workers:
+            return
+
+        self._draining_departed_workers = True
+        try:
+            while self._departed_worker_queue:
+                await self.__disconnect_worker(self._departed_worker_queue.popleft())
+        finally:
+            self._draining_departed_workers = False
 
     async def routine(self):
         await self.__clean_workers()
