@@ -34,16 +34,15 @@ class _NullMonitor:
 
 
 class TestWorkerControllerMassEviction(unittest.TestCase):
-    """Rerouting departed workers' tasks must not recurse once per dead worker.
+    """A whole batch of workers dropping at once must be cleaned up without crashing the scheduler.
 
     With one shared capability every task fits every worker, so a task shed from a dead worker is
-    reassigned to another dead-but-still-registered worker; that worker's failed send reports it departed
-    and re-enters the disconnect path. When a whole batch of pods drops at once this used to recurse one
-    stack frame deeper per dead worker and blow Python's recursion limit, crashing the scheduler. The
-    disconnect must drain the departed workers iteratively instead.
+    reassigned to another dead-but-still-registered worker whose send also fails. __send_to_worker swallows
+    that departed-peer error instead of re-entering the disconnect path, so the heartbeat sweep disconnects
+    the whole batch iteratively, without a per-worker reroute cascade or unbounded coroutine recursion.
     """
 
-    N_WORKERS = 300  # comfortably past the ~90-deep point where the old recursion hit the limit
+    N_WORKERS = 300  # a large simultaneous batch, well past any reasonable recursion limit
 
     @staticmethod
     def _make_task(index: int) -> Task:
@@ -56,8 +55,9 @@ class TestWorkerControllerMassEviction(unittest.TestCase):
             capabilities={},
         )
 
-    def test_mass_eviction_reroute_does_not_recurse(self):
+    def test_mass_eviction_is_handled_without_crashing(self):
         config = MagicMock()
+        config.get_config.side_effect = lambda key: 0 if key == "worker_timeout_seconds" else MagicMock()
         policy = VanillaPolicyController("simple", "allocate=capability; scaling=vanilla")
         worker_controller = VanillaWorkerController(config, policy)
         task_controller = VanillaTaskController(config)
@@ -71,17 +71,23 @@ class TestWorkerControllerMassEviction(unittest.TestCase):
         graph_controller = MagicMock()
         graph_controller.is_graph_subtask.return_value = False
 
-        worker_controller.register(binder, monitor, task_controller)
+        worker_controller.register(binder, monitor, task_controller)  # type: ignore[arg-type]
         task_controller.register(
-            binder, monitor, client_controller, object_controller, worker_controller, graph_controller
+            binder,  # type: ignore[arg-type]
+            monitor,  # type: ignore[arg-type]
+            client_controller,
+            object_controller,
+            worker_controller,
+            graph_controller,
         )
 
-        # Register N live workers (bypassing on_heartbeat; replicate the state it maintains).
+        # Register N workers with a stale last-heartbeat so the sweep times all of them out at once
+        # (bypassing on_heartbeat; replicate the state it maintains).
         manager_id = b"pod-manager"
         for i in range(self.N_WORKERS):
             worker_id = WorkerID(f"worker-{i}".encode())
             policy.add_worker(worker_id, {"capA": -1}, 10)
-            worker_controller._worker_alive_since[worker_id] = (time.time(), None)
+            worker_controller._worker_alive_since[worker_id] = (time.time() - 3600, None)
             worker_controller._worker_to_manager[worker_id] = manager_id
             worker_controller._manager_to_workers.setdefault(manager_id, set()).add(worker_id)
 
@@ -90,8 +96,9 @@ class TestWorkerControllerMassEviction(unittest.TestCase):
                 await task_controller.on_task_new(self._make_task(i))
             for i in range(self.N_WORKERS):  # a batch of pods is evicted at once
                 binder.dead.add(WorkerID(f"worker-{i}".encode()))
-            # Must not raise RecursionError: the reroute cascade drains iteratively, not recursively.
-            await worker_controller.on_worker_departed(WorkerID(b"worker-0"))
+            # Must not raise RecursionError: the sweep disconnects the batch iteratively and each failed
+            # reroute send is swallowed rather than re-entering the disconnect path.
+            await worker_controller.routine()
 
         _run(scenario())
 

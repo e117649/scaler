@@ -180,7 +180,7 @@ class VanillaGraphTaskController(GraphTaskController, Looper, Reporter):
         except ConnectorSocketClosedByRemoteEndError:
             # A trivially-complete graph delivers its result to the client here; if that client has
             # departed the send fails, and on this timer loop letting it propagate would tear the
-            # scheduler down. Worker sends for real subtasks reroute earlier (in __send_to_worker).
+            # scheduler down. Real subtask sends to workers swallow a departed peer in __send_to_worker.
             logger.info(f"{client!r}: departed while adding graph, dropping undeliverable result")
 
     def get_status(self) -> Dict:

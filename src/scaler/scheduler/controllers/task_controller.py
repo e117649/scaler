@@ -406,21 +406,20 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         )
 
     async def __send_to_worker(self, worker_id: WorkerID, message: BaseMessage) -> bool:
-        """Send to a worker, returning False if the worker had already departed.
+        """Send to a worker, returning False if its socket was already closed by the peer.
 
-        A worker can vanish at any moment (pod eviction, crash), and the closed socket only surfaces
-        here, on the send. Treat that as the worker departing: hand it to the worker controller so its
-        tasks reroute through the normal disconnect path (rather than waiting out the heartbeat
-        timeout). Swallowing it is also what keeps the scheduler alive -- raised from the balancer's
-        own loop (not the binder receive loop) it would propagate through asyncio.gather and tear the
-        whole scheduler down.
+        A worker can die between its last heartbeat and this send (pod eviction, crash), and the closed
+        socket only surfaces here. A dead worker must never crash the scheduler, so swallow the error --
+        raised from a timer loop (not the binder receive loop) it would otherwise propagate through
+        asyncio.gather and tear the scheduler down. Rerouting the worker's tasks is left to the disconnect
+        path (its DisconnectRequest, or the heartbeat-timeout sweep); the False return only tells the
+        caller to stop this transition.
         """
         try:
             await self._binder.send(worker_id, message)
             return True
         except ConnectorSocketClosedByRemoteEndError:
-            logger.info(f"{worker_id!r}: send failed, worker departed; rerouting its tasks")
-            await self._worker_controller.on_worker_departed(worker_id)
+            logger.info(f"{worker_id!r}: departed before {type(message).__name__} could be sent")
             return False
 
     async def __send_to_client(self, client_id: ClientID, message: BaseMessage) -> None:
@@ -446,11 +445,10 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         try:
             await self._state_functions[state_machine.current_state()](task_id, state_machine, **kwargs)  # noqa
         except ConnectorSocketClosedByRemoteEndError:
-            # A peer departed mid-transition. Worker sends already reroute via __send_to_worker; this
-            # additionally covers delivering a result/cancel-confirm to a client that has gone. The
-            # message is undeliverable, so drop it -- and it must not be fatal: raised from a timer loop
-            # (balancer/cleanup) rather than the binder receive loop, re-raising would propagate through
-            # asyncio.gather and tear the whole scheduler down.
+            # Defensive net for any undeliverable send during a transition. __send_to_worker and
+            # __send_to_client swallow their own departed-peer errors, but anything they miss must still
+            # not be fatal here: raised from a timer loop (balancer/cleanup) rather than the binder receive
+            # loop, re-raising would propagate through asyncio.gather and tear the whole scheduler down.
             logger.info(f"{task_id!r}: peer departed during {transition}, dropping undeliverable message")
         except Exception as e:
             logger.exception(

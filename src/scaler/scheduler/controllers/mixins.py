@@ -84,7 +84,7 @@ class ClientController(Reporter):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def on_task_finish(self, task_id: TaskID) -> Optional[bytes]:
+    def on_task_finish(self, task_id: TaskID) -> Optional[ClientID]:
         raise NotImplementedError()
 
     @abc.abstractmethod
@@ -192,13 +192,6 @@ class WorkerController(Reporter):
 
     @abc.abstractmethod
     async def on_disconnect(self, worker_id: WorkerID, request: DisconnectRequest):
-        raise NotImplementedError()
-
-    @abc.abstractmethod
-    async def on_worker_departed(self, worker_id: WorkerID):
-        """Clean up a worker whose socket is gone (a send to it failed because the peer closed).
-        Drops it from tracking and the allocate policy and reroutes its tasks -- the same path a
-        heartbeat timeout takes, but without waiting for it."""
         raise NotImplementedError()
 
     @abc.abstractmethod
