@@ -1,3 +1,4 @@
+import sys
 import unittest
 
 from scaler.utility.exitcode import describe_exitcode
@@ -8,6 +9,7 @@ class TestDescribeExitcode(unittest.TestCase):
         self.assertEqual(describe_exitcode(0), "0")
         self.assertEqual(describe_exitcode(1), "1")
 
+    @unittest.skipIf(sys.platform == "win32", "negative signal exit codes and their names are POSIX-specific")
     def test_signal_death_is_named(self) -> None:
         self.assertEqual(describe_exitcode(-9), "-9 (SIGKILL)")  # e.g. OOM kill
         self.assertEqual(describe_exitcode(-15), "-15 (SIGTERM)")
