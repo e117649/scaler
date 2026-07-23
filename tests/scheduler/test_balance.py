@@ -207,9 +207,13 @@ class TestBalance(unittest.TestCase):
         Regression test for a scale-down crash: a worker dies outright (Kubernetes pod eviction) while
         the balancer is moving a task off it, so the balance-cancel is sent to a socket that has already
         closed. That send raises ConnectorSocketClosedByRemoteEndError, and because the balancer runs in
-        its own loop -- not the binder receive loop that swallows it -- the exception propagated through
-        asyncio.gather (``except YMQException``) and tore the whole scheduler down, hanging every client
-        until the deployment was restarted.
+        its own loop -- not the binder receive loop that swallows it -- the exception would propagate
+        through asyncio.gather (``except YMQException``) and tear the whole scheduler down, hanging every
+        client until the deployment was restarted.
+
+        Asserts both halves: the scheduler stays alive through that undeliverable send, and the killed
+        worker's orphaned tasks are then rerouted -- by the heartbeat-timeout sweep, which is what reclaims
+        an abruptly-dead worker's tasks -- and complete on a second worker.
 
         This complements test_balance_cancel_worker_death: that one SIGSTOPs the worker, so its socket
         stays open and the send succeeds (the task orphans until a timeout); this one SIGKILLs the whole
@@ -218,9 +222,10 @@ class TestBalance(unittest.TestCase):
         """
 
         TASK_SLEEP_SECONDS = 5
-        # Far enough out that the heartbeat-timeout cleanup never fires first: the balancer must be the
-        # one that sends to the dead socket, which is the path under test.
-        WORKER_TIMEOUT_SECONDS = 30
+        # Short enough that the heartbeat-timeout sweep -- which is what reroutes an abruptly-dead worker's
+        # tasks -- fires within the wait window below, yet long enough that the balancer (running every
+        # second) still lists the killed worker and sends it a cancel on its closed socket, the crash path.
+        WORKER_TIMEOUT_SECONDS = 8
         HEARTBEAT_INTERVAL_SECONDS = 1
         CAPABILITIES = {"gpu": -1}
 
@@ -277,7 +282,8 @@ class TestBalance(unittest.TestCase):
                     "test setup did not reach the scenario under test"
                 )
 
-            # The cancel to the departed worker has now been sent; before the fix that killed the scheduler.
+            # The balancer has now sent its cancel to the departed worker's closed socket; that send must
+            # be swallowed, not tear the scheduler down.
             time.sleep(2)
             self.assertTrue(
                 combo._scheduler.is_alive(),  # type: ignore[attr-defined]
