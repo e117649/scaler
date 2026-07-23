@@ -327,6 +327,7 @@ class VanillaTaskController(TaskController, Looper, Reporter):
     ):
         assert task_id == task_result.taskId
         assert state_machine.current_state() == TaskState.failedWorkerDied
+        logger.warning(f"{task_id!r}: failed because its worker died; reporting failedWorkerDied to the client")
         await self.__send_task_result_to_client(task_result)
 
     async def __send_task_cancel_to_worker(self, task_cancel: TaskCancel):
@@ -352,8 +353,8 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         client = self._client_controller.on_task_finish(task_result.taskId)
         if client is None:
             logger.warning(
-                f"{task_result.taskId!r}: dropping task result, owning client is no longer registered "
-                f"(likely disconnected via client_timeout_seconds while the task was running)"
+                f"{task_result.taskId!r}: dropping {task_result.resultType} result, owning client is no longer "
+                f"registered (likely disconnected via client_timeout_seconds while the task was running)"
             )
         else:
             await self.__send_to_client(client, task_result)
