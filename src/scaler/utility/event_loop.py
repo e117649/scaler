@@ -1,11 +1,13 @@
 import asyncio
 import enum
 import logging
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional, TypeVar
 
 from scaler.io.ymq import ConnectorSocketClosedByRemoteEndError
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class EventLoopType(enum.Enum):
@@ -80,8 +82,8 @@ def create_async_loop_routine(routine: Callable[[], Awaitable], seconds: int, sw
 
 
 def run_task_forever(
-    loop: asyncio.AbstractEventLoop, task: Awaitable[None], cleanup_callback: Optional[Callable[[], None]] = None
-) -> None:
+    loop: asyncio.AbstractEventLoop, task: Awaitable[T], cleanup_callback: Optional[Callable[[], None]] = None
+) -> T:
     """
     run task until completion and close the loop
 
@@ -91,7 +93,7 @@ def run_task_forever(
     """
 
     try:
-        loop.run_until_complete(task)
+        return loop.run_until_complete(task)
     finally:
         pending = asyncio.all_tasks(loop)
         for pending_task in pending:
