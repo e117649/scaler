@@ -1,6 +1,6 @@
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from scaler.io.ymq import ConnectorSocketClosedByRemoteEndError, ErrorCode
 from scaler.protocol.capnp import (
@@ -21,12 +21,12 @@ def _run(coro):
 
 
 class TestTaskControllerRoutingResilience(unittest.TestCase):
-    """A send to a departed peer must never propagate out of __routing.
+    """No exception from a state function may propagate out of __routing and crash the scheduler.
 
-    Worker sends are rerouted by __send_to_worker, but a result/cancel-confirm bound for a client that
-    has gone raises the same ConnectorSocketClosedByRemoteEndError. Raised from a timer loop (the
-    balancer or the worker-cleanup loop) rather than the binder receive loop, re-raising it would
-    propagate through asyncio.gather and terminate the whole scheduler.
+    __routing runs from message handlers and from timer loops (the balancer, the worker-cleanup loop);
+    an escape would propagate through asyncio.gather and terminate the whole scheduler. A departed-peer
+    error is expected and dropped quietly; any other bug is logged with its transition/state path and
+    dropped so the scheduler stays alive.
     """
 
     @staticmethod
@@ -54,11 +54,14 @@ class TestTaskControllerRoutingResilience(unittest.TestCase):
             ConnectorSocketClosedByRemoteEndError(ErrorCode.ConnectorSocketClosedByRemoteEnd, "client gone"),
         )
 
-    def test_other_errors_still_propagate(self):
+    def test_other_errors_are_logged_not_propagated(self):
         controller = self._controller()
-        # A genuine bug must still surface (the backstop is narrow, only for the departed-peer error).
-        with self.assertRaises(ValueError):
+        # A genuine bug in a state function must NOT propagate out of __routing and crash the scheduler:
+        # it is logged and the transition is dropped so the scheduler stays alive (create_async_loop_routine
+        # is the wider backstop for the rest).
+        with patch("scaler.scheduler.controllers.task_controller.logger.exception") as mock_exception:
             self._drive_running_handler_raising(controller, TaskID(b"real-bug-task"), ValueError("real bug"))
+        self.assertTrue(mock_exception.called, "the bug must be logged")
 
     def test_worker_disconnect_while_canceling_supplies_cancel_confirm(self):
         """A canceling task whose worker disconnects must reach __state_canceled with a TaskCancelConfirm,

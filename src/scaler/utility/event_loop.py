@@ -70,6 +70,16 @@ def create_async_loop_routine(routine: Callable[[], Awaitable], seconds: int, sw
                     # timeouts, not by this send error.
                     routine_owner = routine.__self__.__class__.__name__  # type: ignore[attr-defined]
                     logger.info(f"{routine_owner}: peer departed mid-routine, continuing")
+                except Exception:
+                    if not swallow_peer_departed:
+                        raise
+                    # Scheduler loops (swallow_peer_departed=True) must survive a bug in any single routine
+                    # -- including a message handler, since the binder routine dispatches inbound messages.
+                    # An unhandled exception here would otherwise propagate through asyncio.gather and take
+                    # the whole scheduler down. Log the traceback and keep looping so the scheduler stays
+                    # alive; agents keep swallow_peer_departed=False and still crash-and-restart cleanly.
+                    routine_owner = routine.__self__.__class__.__name__  # type: ignore[attr-defined]
+                    logger.exception(f"{routine_owner}: routine raised, continuing")
                 await asyncio.sleep(seconds)
         except asyncio.CancelledError:
             pass

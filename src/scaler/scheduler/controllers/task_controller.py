@@ -450,11 +450,12 @@ class VanillaTaskController(TaskController, Looper, Reporter):
             # not be fatal here: raised from a timer loop (balancer/cleanup) rather than the binder receive
             # loop, re-raising would propagate through asyncio.gather and tear the whole scheduler down.
             logger.info(f"{task_id!r}: peer departed during {transition}, dropping undeliverable message")
-        except Exception as e:
-            logger.exception(
-                f"{task_id!r}: exception happened, transition: {transition} path: {state_machine.get_path()}"
-            )
-            raise e
+        except Exception:
+            # A bug in a state function must not crash the scheduler: __routing runs both from message
+            # handlers and from the balance/cleanup timer loops, so re-raising would propagate through
+            # asyncio.gather. Log the transition + state path and drop it -- the task may stall (surfaced by
+            # the client/worker timeouts), but the scheduler stays alive.
+            logger.exception(f"{task_id!r}: transition {transition} failed, path: {state_machine.get_path()}")
 
     async def __retry_unassignable(self):
         futures = [

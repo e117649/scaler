@@ -290,11 +290,12 @@ class Scheduler:
             pass
         except ClientShutdownException as e:
             logger.info(f"{self.__class__.__name__}: {e}")
-            pass
-        except YMQException:
-            pass
-        except ObjectStorageException:
-            pass
+        except (YMQException, ObjectStorageException):
+            # The scheduler is tearing down below; never let this be silent -- a dead binder / object
+            # storage is one of the ways it "just stops responding" in production.
+            logger.exception(f"{self.__class__.__name__}: main loop stopped on a transport/storage error")
+        except Exception:
+            logger.exception(f"{self.__class__.__name__}: main loop stopped on an unexpected error")
 
         self._binder.destroy()
         self._binder_monitor.destroy()
