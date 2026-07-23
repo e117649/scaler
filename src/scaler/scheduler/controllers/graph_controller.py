@@ -150,6 +150,7 @@ class VanillaGraphTaskController(GraphTaskController, Looper, Reporter):
             return
 
         assert result.resultType != TaskResultType.success
+        logger.warning(f"graph {graph_task_id!r}: aborting -- subtask {result.taskId!r} returned {result.resultType}")
         await self.__abort_whole_graph(graph_task_id, result)
 
     async def on_graph_sub_task_cancel_confirm(self, task_cancel_confirm: TaskCancelConfirm):
@@ -359,7 +360,12 @@ class VanillaGraphTaskController(GraphTaskController, Looper, Reporter):
 
         # mark all inactive tasks done
         while graph_info.sorter.is_active():
-            for task_id in graph_info.sorter.get_ready():
+            ready_task_ids = graph_info.sorter.get_ready()
+            if not ready_task_ids:
+                # Defensive, mirrors __cancel_whole_graph: never busy-spin the whole event loop if the
+                # sorter ever reports active with nothing ready.
+                break
+            for task_id in ready_task_ids:
                 new_result_object_ids = await self.__duplicate_objects(graph_info.client, result_objects)
                 result = TaskResult(
                     taskId=task_id,
