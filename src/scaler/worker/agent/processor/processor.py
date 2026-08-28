@@ -11,6 +11,7 @@ from contextvars import ContextVar, Token
 from multiprocessing.synchronize import Event as EventType
 from typing import IO, Callable, List, Optional, Tuple, TypeVar, cast
 
+import psutil
 import tblib.pickling_support
 
 from scaler.config.common.security import SecurityConfig
@@ -43,6 +44,12 @@ logger = logging.getLogger(__name__)
 
 SUSPEND_SIGNAL = "SIGUSR1"  # use str instead of a signal.Signal to not trigger an import error on unsupported systems.
 
+# The agent and its processor are separate processes competing for the same cores. The agent sends the heartbeat
+# that stops the scheduler declaring this worker dead and needs very little CPU to do it, so user code runs below
+# it. Kept small deliberately: the maximum of 19 yields to anything at normal priority, which costs nested tasks
+# an order of magnitude when the machine runs anything else.
+PROCESSOR_NICE_VALUE = 5
+
 # Attempts at handing a finished task's result off, and the wait before the second one, doubling from
 # there. The connectors reconnect on their own, so the delays only have to outlast a reconnect.
 RESULT_HAND_OFF_MAX_ATTEMPTS = 4
@@ -51,6 +58,23 @@ RESULT_HAND_OFF_RETRY_DELAY_SECONDS = 1.0
 _current_processor: ContextVar[Optional["Processor"]] = ContextVar("_current_processor", default=None)
 
 _T = TypeVar("_T")
+
+
+def lower_processor_priority() -> None:
+    """Drop this process below the worker agent in the OS scheduler.
+
+    Every processor is lowered by the same amount, so they keep their equal share of the machine relative to each
+    other and only yield to the agent that supervises them.
+    """
+    try:
+        process = psutil.Process()
+        if sys.platform == "win32":
+            process.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+        else:
+            process.nice(PROCESSOR_NICE_VALUE)
+    except Exception as error:
+        # advisory only: a platform that refuses or cannot express this must still run tasks
+        logger.warning(f"Processor[{os.getpid()}] could not lower its scheduling priority: {error}")
 
 
 class Processor(multiprocessing.get_context("spawn").Process):  # type: ignore
@@ -130,6 +154,8 @@ class Processor(multiprocessing.get_context("spawn").Process):  # type: ignore
 
         bootstrap_process(log_paths=tuple(logging_paths), logging_level=self._logging_level)
         tblib.pickling_support.install()
+
+        lower_processor_priority()
 
         self._backend = get_network_backend_from_env()
         assert self._backend is not None
