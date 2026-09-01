@@ -92,7 +92,7 @@ After the Zen of Python (`python -c 'import this'`), for the C++ as much as the 
 - The fix matches the problem:
   - a clean hole gets fixed
   - a trade-off gets a config option
-  - anything architectural gets a writeup and is the maintainers' call
+  - ask the operator before building when there are multiple reasonable solutions to the problem
 - Every changed line traces to the task.
 - Remove what the change orphans, and report other dead code rather than deleting it.
 - A changed CLI flag, config key, or documented behaviour updates `docs/source/tutorials/` in the same change.
@@ -175,6 +175,7 @@ Everything written here (comments, docstrings, docs, commit messages, logs, CLI 
 - Statements, not questions.
 - Prose that names code matches the source: every symbol, default, flag.
 - Present state only: "now", "previously", "used to" belong in the commit message.
+- The tree is the only context: a reader holding the code and nothing else has everything the writing needs.
 - Every fact and every real hedge stays, none is added: "may have failed" is not "failed".
 - Three or more steps or conditions: a list, numbered when ordered, one action per step.
 
@@ -182,7 +183,7 @@ Everything written here (comments, docstrings, docs, commit messages, logs, CLI 
 
 - Only what the code and a grep cannot say: the why, an invariant, a gotcha, a measured number, a link to a decision.
 - One line: more belongs in the commit message, or the code needs a better shape.
-- For the next reader, not this change's reviewer: no "as requested", no PR or issue numbers.
+- For the next reader, not this change's reviewer: no PR or issue numbers.
 - A test docstring names the behaviour the test pins.
 
 ### Documentation and this file
@@ -196,7 +197,7 @@ Everything written here (comments, docstrings, docs, commit messages, logs, CLI 
 
 - Subject: [Conventional Commits](https://www.conventionalcommits.org/), a type (`fix`, `feat`, `docs`, `test`, `refactor`, `build`, `ci`) and an optional scope (`fix(ymq):`), then the change in the imperative.
 - Body only for what the diff cannot say: what was wrong, why it matters, what was verified, in point form.
-- A message stands without the conversation: no "as discussed", no session structure, no local paths, hostnames, or emails.
+- A message names no session structure, local paths, hostnames, or emails.
 - One concern per commit, each passing the gate on its own: a refactor ships apart from behaviour changes.
 - A fix to unpushed work folds into the commit it fixes, and pushed work gets a new commit.
 - Stage named files: scratch notes, generated output, and session artifacts stay out.
