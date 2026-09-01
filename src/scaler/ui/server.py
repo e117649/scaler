@@ -138,11 +138,17 @@ class WebGUIRequestHandler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def __send_static(self, name: str) -> None:
-        path = (STATIC_DIR / name).resolve()
-        if not path.is_file() or STATIC_DIR.resolve() not in path.parents:
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        self.__send_file(path)
+        """Serve one of the files the static directory holds, matched by name.
+
+        The request never joins a path. It picks from what the directory lists, so a name carrying `..`
+        or an absolute path matches nothing and gets a 404.
+        """
+        for asset in STATIC_DIR.iterdir():
+            if asset.name == name and asset.is_file():
+                self.__send_file(asset)
+                return
+
+        self.send_error(HTTPStatus.NOT_FOUND)
 
     def __send_file(self, path: Path) -> None:
         content_type, _ = mimetypes.guess_type(path.name)
@@ -171,5 +177,7 @@ class WebGUIServer(ThreadingHTTPServer):
         self.app = app
         if security.has_credentials():
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            # TLS 1.0 and 1.1 are deprecated by RFC 8996 and the default context still offers them.
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             context.load_cert_chain(certfile=security.tls_cert, keyfile=security.tls_key)
             self.socket = context.wrap_socket(self.socket, server_side=True)
