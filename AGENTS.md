@@ -92,7 +92,7 @@ After the Zen of Python (`python -c 'import this'`), for the C++ as much as the 
 - The fix matches the problem:
   - a clean hole gets fixed
   - a trade-off gets a config option
-  - ask the operator before building when there are multiple reasonable solutions to the problem
+  - ask the operator before building if there are multiple reasonable solutions to the problem
 - Every changed line traces to the task.
 - Remove what the change orphans, and report other dead code rather than deleting it.
 - A changed CLI flag, config key, or documented behaviour updates `docs/source/tutorials/` in the same change.
