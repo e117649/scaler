@@ -1,0 +1,109 @@
+"""The task list and the task log, both paged server-side.
+
+A browser is sent one page whatever the GUI retains, so raising the retention grows what an operator can
+page back through without growing what crosses the socket or what the browser has to render.
+"""
+
+import unittest
+
+from scaler.config.types.address import AddressConfig
+from scaler.protocol.capnp import StateBalanceAdvice, StateTask, TaskState
+from scaler.ui.app import TASK_EVENTS_PAGE_SIZE, TASK_LOG_PAGE_SIZE, BrowserView, WebGUIConfig, WebUIApp
+
+
+def make_app(retained: int = 1000) -> WebUIApp:
+    config = WebGUIConfig(monitor_address=AddressConfig.from_string("tcp://127.0.0.1:6380"), task_log_max_size=retained)
+    return WebUIApp(config)
+
+
+def make_task(**kwargs) -> StateTask:
+    """A StateTask as the GUI receives it: capability reads need a deserialized struct."""
+    return StateTask.from_bytes(StateTask(**kwargs).to_bytes())
+
+
+def run_tasks(app: WebUIApp, count: int, state: TaskState = TaskState.success) -> None:
+    for index in range(count):
+        task_id = index.to_bytes(32, "big")
+        app._process_task_state(make_task(taskId=task_id, functionName=b"work", state=TaskState.running, worker=b"w1"))
+        app._record_task_event(make_task(taskId=task_id, functionName=b"work", state=TaskState.running, worker=b"w1"))
+        app._process_task_state(make_task(taskId=task_id, functionName=b"work", state=state, worker=b"w1"))
+        app._record_task_event(make_task(taskId=task_id, functionName=b"work", state=state, worker=b"w1"))
+
+
+class TestTaskListPaging(unittest.TestCase):
+    def test_a_browser_is_sent_one_page_however_many_tasks_are_retained(self) -> None:
+        app = make_app()
+        run_tasks(app, 300)
+
+        section = app._task_log_section(BrowserView())
+        self.assertEqual(len(section["task_log"]), TASK_LOG_PAGE_SIZE)
+        self.assertEqual(section["task_log_held"], 300)
+        self.assertEqual(section["task_log_total"], 300)
+        self.assertEqual(section["task_log_pages"], 6)
+
+    def test_the_second_page_carries_the_next_rows(self) -> None:
+        app = make_app()
+        run_tasks(app, 300)
+
+        first = app._task_log_section(BrowserView())["task_log"]
+        second = app._task_log_section(BrowserView(task_log_page=1))["task_log"]
+        self.assertEqual([row["task_id"] for row in first[:1]], [(299).to_bytes(32, "big").hex()])
+        self.assertEqual([row["task_id"] for row in second[:1]], [(249).to_bytes(32, "big").hex()])
+
+    def test_a_page_past_the_end_is_clamped_to_the_last_one(self) -> None:
+        app = make_app()
+        run_tasks(app, 60)
+
+        view = BrowserView(task_log_page=99)
+        section = app._task_log_section(view)
+        self.assertEqual((section["task_log_page"], view.task_log_page), (1, 1))
+
+    def test_a_task_keeps_one_row_across_its_whole_life(self) -> None:
+        """Running then succeeding is one task, so the list must not grow a row per state change."""
+        app = make_app()
+        run_tasks(app, 1)
+
+        rows = app._task_log_section(BrowserView())["task_log"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "success")
+        self.assertEqual(rows[0]["worker"], "w1")
+
+    def test_retention_bounds_the_rows_and_the_index_together(self) -> None:
+        app = make_app(retained=100)
+        run_tasks(app, 250)
+
+        self.assertEqual(len(app._task_log), 100)
+        self.assertEqual(len(app._task_log_by_id), 100)
+        self.assertEqual(app._task_log_section(BrowserView())["task_log_total"], 250)
+
+
+class TestTaskLogPaging(unittest.TestCase):
+    def test_a_browser_is_sent_one_page_of_events(self) -> None:
+        app = make_app()
+        run_tasks(app, 200)
+
+        section = app._task_events_section(BrowserView())
+        self.assertEqual(len(section["task_events"]), TASK_EVENTS_PAGE_SIZE)
+        self.assertEqual(section["task_events_held"], 400)  # one running and one success per task
+
+    def test_filtering_to_one_task_shows_only_its_events(self) -> None:
+        app = make_app()
+        run_tasks(app, 200)
+        wanted = (7).to_bytes(32, "big").hex()
+
+        section = app._task_events_section(BrowserView(task_events_task=wanted))
+        self.assertEqual(section["task_events_held"], 2)
+        self.assertEqual({row["task_id"] for row in section["task_events"]}, {wanted})
+        self.assertEqual([row["event"] for row in section["task_events"]], ["success", "running"])
+
+    def test_a_rebalance_leaves_its_own_row(self) -> None:
+        app = make_app()
+        run_tasks(app, 1)
+        app._record_balance_advice(StateBalanceAdvice(workerId=b"w1", taskIds=[(0).to_bytes(32, "big")]))
+
+        events = app._task_events_section(BrowserView())["task_events"]
+        self.assertEqual([row["event"] for row in events], ["rebalance", "success", "running"])
+
+
+if __name__ == "__main__":
+    unittest.main()

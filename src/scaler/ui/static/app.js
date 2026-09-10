@@ -8,16 +8,14 @@ var workerSortField = null;  // current sort column field name (the server does 
 var workerSortAsc = true;    // sort direction
 var lastWorkersData = [];    // this browser's page of worker rows, already sorted by the server
 var workersTotal = 0;        // full fleet size, of which this browser holds one page
-var taskLogTotal = 0;  // completed tasks seen by the server since it started, uncapped by the display ring
-var TASK_LOG_MAX_SIZE = 100;  // overridden by server's task_log_max_size on initial state
-var taskLogData = [];        // full task-log data, newest first, up to TASK_LOG_MAX_SIZE
-var taskLogById = {};        // task_id -> entry, for in-place status updates
-// The worker views are paged by the server, so the browser never receives the whole fleet. The task
-// log is small and bounded server-side, so it stays paged here with PAGE_SIZE.
-var PAGE_SIZE = 50;
+var taskLogTotal = 0;  // completed tasks the server has seen since it started, however few it retains
+var taskLogHeld = 0;   // tasks the server still holds, of which this browser has one page
+var taskLogData = [];  // this browser's page of task rows, newest first
+// Every table is paged by the server, so the browser holds one page rather than the whole history.
 var workersPage = 0;
 var workersPages = 1;
 var taskLogPage = 0;
+var taskLogPages = 1;
 var processorsPage = 0;
 var processorsPages = 1;
 var processorsTotal = 0;
@@ -76,8 +74,11 @@ var taskEventsBody = $("taskevents-body");
 var taskEventsCount = $("taskevents-count");
 var taskEventsClear = $("taskevents-clear");
 var taskEventsFilterLabel = $("taskevents-filter-label");
-var lastTaskEvents = [];
-var taskEventFilter = null;
+var lastTaskEvents = [];     // this browser's page of event rows, newest first
+var taskEventsPage = 0;
+var taskEventsPages = 1;
+var taskEventsHeld = 0;      // events the server holds under the current filter
+var taskEventFilter = "";    // task id the server is filtering to, empty for every task
 var machinesTotal = $("machines-total");
 var lastMachinesData = [];
 var clientsBody = $("clients-body");
@@ -169,14 +170,6 @@ function renderPager(elId, page, totalPages, total, onPage) {
     el.appendChild(next);
 }
 
-// Clamp a page index and return the slice bounds ([start, end)) for the current page over `total` items.
-function pageSlice(page, total, size) {
-    size = size || PAGE_SIZE;
-    var totalPages = Math.max(1, Math.ceil(total / size));
-    if (page >= totalPages) page = totalPages - 1;
-    if (page < 0) page = 0;
-    return { page: page, totalPages: totalPages, start: page * size, end: page * size + size };
-}
 
 // -- Fit Page Toggle --
 var fitPageBtn = $("fit-page-btn");
@@ -275,48 +268,27 @@ function connect() {
     };
 }
 
+// A full state and an update carry the same sections, so both are applied the same way; the full state
+// only adds the browser id every later view request has to name.
 function handleMessage(data) {
-    if (data.type === "full_state") {
-        handleFullState(data);
-        return;
-    }
+    if (data.type === "full_state" && typeof data.browser_id === "number") browserId = data.browser_id;
 
-    if (data.scheduler) {
-        updateScheduler(data.scheduler);
-    }
-    if (data.workers) {
-        applyPageInfo(data);
-        updateWorkers(data.workers);
-    }
+    applyPageInfo(data);
+    if (data.scheduler) updateScheduler(data.scheduler);
+    if (data.workers) updateWorkers(data.workers);
     if (data.machines) updateMachines(data.machines);
     if (data.clients) updateClients(data.clients);
     if (data.storage) updateStorage(data.storage);
     if (data.objects) updateObjects(data.objects, data.objects_total);
+    if (data.task_log) updateTaskLog(data.task_log);
     if (data.task_events) updateTaskEvents(data.task_events);
-    if (data.worker_managers) {
-        updateWorkerManagers(data.worker_managers);
-    }
-    if (data.worker_events) {
-        handleWorkerEvents(data.worker_events);
-    }
-    if (data.task_updates) {
-        if (typeof data.task_log_total === "number") taskLogTotal = data.task_log_total;
-        handleTaskUpdates(data.task_updates);
-    }
-    if (data.task_stream) {
-        updateTaskStream(data.task_stream);
-    }
+    if (data.worker_managers) updateWorkerManagers(data.worker_managers);
+    if (data.worker_events) handleWorkerEvents(data.worker_events);
+    if (data.task_stream) updateTaskStream(data.task_stream);
     if (data.memory_chart && data.memory_chart.cpu_points) lastCpuPoints = data.memory_chart.cpu_points;
-    if (data.memory_chart) {
-        updateMemoryChart(data.memory_chart);
-    }
-    if (data.processors) {
-        applyPageInfo(data);
-        updateProcessors(data.processors);
-    }
-    if (data.settings) {
-        applySettings(data.settings);
-    }
+    if (data.memory_chart) updateMemoryChart(data.memory_chart);
+    if (data.processors) updateProcessors(data.processors);
+    if (data.settings) applySettings(data.settings);
 }
 
 // The server clamps the page it actually served, so mirror that back rather than what we asked for.
@@ -327,31 +299,14 @@ function applyPageInfo(data) {
     if (typeof data.processors_total === "number") processorsTotal = data.processors_total;
     if (typeof data.processors_page === "number") processorsPage = data.processors_page;
     if (typeof data.processors_pages === "number") processorsPages = data.processors_pages;
-}
-
-function handleFullState(data) {
-    if (typeof data.browser_id === "number") browserId = data.browser_id;
-    if (data.scheduler) updateScheduler(data.scheduler);
-    applyPageInfo(data);
-    if (data.workers) updateWorkers(data.workers);
-    if (data.machines) updateMachines(data.machines);
-    if (data.clients) updateClients(data.clients);
-    if (data.storage) updateStorage(data.storage);
-    if (data.objects) updateObjects(data.objects, data.objects_total);
-    if (data.task_events) updateTaskEvents(data.task_events);
-    if (data.worker_managers) updateWorkerManagers(data.worker_managers);
-    if (typeof data.task_log_max_size === "number" && data.task_log_max_size > 0) {
-        TASK_LOG_MAX_SIZE = data.task_log_max_size;
-    }
-    taskLogTotal = typeof data.task_log_total === "number" ? data.task_log_total : 0;
-    if (data.task_log) {
-        setTaskLog(data.task_log);
-    }
-    if (data.task_stream) updateTaskStream(data.task_stream);
-    if (data.memory_chart && data.memory_chart.cpu_points) lastCpuPoints = data.memory_chart.cpu_points;
-    if (data.memory_chart) updateMemoryChart(data.memory_chart);
-    if (data.processors) updateProcessors(data.processors);
-    if (data.settings) applySettings(data.settings);
+    if (typeof data.task_log_total === "number") taskLogTotal = data.task_log_total;
+    if (typeof data.task_log_held === "number") taskLogHeld = data.task_log_held;
+    if (typeof data.task_log_page === "number") taskLogPage = data.task_log_page;
+    if (typeof data.task_log_pages === "number") taskLogPages = data.task_log_pages;
+    if (typeof data.task_events_held === "number") taskEventsHeld = data.task_events_held;
+    if (typeof data.task_events_page === "number") taskEventsPage = data.task_events_page;
+    if (typeof data.task_events_pages === "number") taskEventsPages = data.task_events_pages;
+    if (typeof data.task_events_task === "string") taskEventFilter = data.task_events_task;
 }
 
 function applySettings(settings) {
@@ -498,27 +453,21 @@ var TASK_EVENT_FIELDS = ["time", "task_id", "event", "client", "worker", "functi
 
 var lastCpuPoints = [];
 
-function updateTaskEvents(events) {
-    lastTaskEvents = events || [];
+function updateTaskEvents(rows) {
+    lastTaskEvents = rows;
     if (activeTab === "tasklog") renderTaskEvents();
 }
 
+// Filtering to one task and paging both run on the server, so this renders the page it was handed.
 function renderTaskEvents() {
-    var rows = taskEventFilter
-        ? lastTaskEvents.filter(function(e) { return e.task_id === taskEventFilter; })
-        : lastTaskEvents;
-
     taskEventsBody.innerHTML = "";
-    for (var i = 0; i < rows.length; i++) {
-        var ev = rows[i];
+    for (var i = 0; i < lastTaskEvents.length; i++) {
+        var ev = lastTaskEvents[i];
         var tr = document.createElement("tr");
         tr.className = "clickable";
         tr.title = "Click to show only this task";
         (function(taskId) {
-            tr.addEventListener("click", function() {
-                taskEventFilter = taskId;
-                renderTaskEvents();
-            });
+            tr.addEventListener("click", function() { showOnlyTask(taskId); });
         })(ev.task_id);
         for (var f = 0; f < TASK_EVENT_FIELDS.length; f++) {
             var td = document.createElement("td");
@@ -529,22 +478,25 @@ function renderTaskEvents() {
         }
         taskEventsBody.appendChild(tr);
     }
-    if (taskEventsCount) {
-        taskEventsCount.textContent = taskEventFilter
-            ? "(" + rows.length + " of " + lastTaskEvents.length + ")"
-            : "(" + lastTaskEvents.length + ")";
-    }
+    if (taskEventsCount) taskEventsCount.textContent = "(" + taskEventsHeld + ")";
     if (taskEventsClear) taskEventsClear.style.display = taskEventFilter ? "" : "none";
     if (taskEventsFilterLabel) {
         taskEventsFilterLabel.textContent = taskEventFilter ? "filtered to " + taskEventFilter.slice(0, 12) : "";
     }
+    renderPagers("taskevents-pager", taskEventsPage, taskEventsPages, taskEventsHeld, function(p) {
+        taskEventsPage = p;
+        sendView({ task_events_page: p });
+    });
+}
+
+function showOnlyTask(taskId) {
+    taskEventFilter = taskId;
+    taskEventsPage = 0;
+    sendView({ task_events_task: taskId, task_events_page: 0 });
 }
 
 if (taskEventsClear) {
-    taskEventsClear.addEventListener("click", function() {
-        taskEventFilter = null;
-        renderTaskEvents();
-    });
+    taskEventsClear.addEventListener("click", function() { showOnlyTask(""); });
 }
 
 function updateMachines(machines) {
@@ -787,45 +739,19 @@ function statusClass(status) {
     return "status-fail";
 }
 
-function handleTaskUpdates(entries) {
-    for (var i = 0; i < entries.length; i++) {
-        var e = entries[i];
-        var existing = taskLogById[e.task_id];
-        if (existing) {
-            for (var k in e) { if (Object.prototype.hasOwnProperty.call(e, k)) existing[k] = e[k]; }
-        } else {
-            taskLogData.unshift(e);  // newest first
-            taskLogById[e.task_id] = e;
-            while (taskLogData.length > TASK_LOG_MAX_SIZE) {
-                var dropped = taskLogData.pop();
-                delete taskLogById[dropped.task_id];
-            }
-        }
-    }
+function updateTaskLog(rows) {
+    taskLogData = rows;
     if (activeTab === "tasklist") renderTaskLog();
     else updateTaskLogBadge();  // the badge (server total) stays current even while the tab is hidden
 }
 
-// full_state: replace the whole task log (active + completed, newest first, already capped by the server).
-function setTaskLog(entries) {
-    taskLogData = entries.slice(0, TASK_LOG_MAX_SIZE);
-    taskLogById = {};
-    for (var i = 0; i < taskLogData.length; i++) taskLogById[taskLogData[i].task_id] = taskLogData[i];
-    taskLogPage = 0;
-    if (activeTab === "tasklist") renderTaskLog();
-    else updateTaskLogBadge();
-}
-
 function renderTaskLog() {
-    var pg = pageSlice(taskLogPage, taskLogData.length);
-    taskLogPage = pg.page;
-    var pageEntries = taskLogData.slice(pg.start, pg.end);
     tasklogBody.innerHTML = "";
-    for (var i = 0; i < pageEntries.length; i++) tasklogBody.appendChild(makeTaskLogRow(pageEntries[i]));
+    for (var i = 0; i < taskLogData.length; i++) tasklogBody.appendChild(makeTaskLogRow(taskLogData[i]));
     updateTaskLogBadge();
-    renderPagers("tasklog-pager", taskLogPage, pg.totalPages, taskLogData.length, function(p) {
+    renderPagers("tasklog-pager", taskLogPage, taskLogPages, taskLogHeld, function(p) {
         taskLogPage = p;
-        renderTaskLog();
+        sendView({ task_log_page: p });
     });
 }
 
@@ -868,14 +794,12 @@ function makeTaskLogRow(e) {
     return tr;
 }
 
-// Badge shows the running total of completed tasks; once it passes the display cap it appends the cap it is
-// windowed to, e.g. "501 (showing 500)".
+// Badge shows the running total of completed tasks; once the server has dropped the oldest it appends how
+// many it still holds, e.g. "60123 (holding 50000)".
 function updateTaskLogBadge() {
-    if (taskLogTotal > TASK_LOG_MAX_SIZE) {
-        tasklogCount.textContent = taskLogTotal + " (showing " + TASK_LOG_MAX_SIZE + ")";
-    } else {
-        tasklogCount.textContent = taskLogTotal;
-    }
+    tasklogCount.textContent = taskLogTotal > taskLogHeld
+        ? taskLogTotal + " (holding " + taskLogHeld + ")"
+        : taskLogTotal;
 }
 
 // -- Task Stream (Canvas) --

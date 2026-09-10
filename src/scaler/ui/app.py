@@ -9,7 +9,7 @@ import struct
 import threading
 from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Collection, Deque, Dict, List, Optional, Set, Tuple
 
 from scaler.config.section.webgui import WebGUIConfig
 from scaler.io.mixins import SyncSubscriber
@@ -64,6 +64,8 @@ BROWSER_QUEUE_MAX_PAYLOADS = 100
 WORKERS_PAGE_SIZE = 50
 PROCESSORS_PAGE_SIZE = 20
 STREAM_PAGE_SIZE = 50
+TASK_LOG_PAGE_SIZE = 50
+TASK_EVENTS_PAGE_SIZE = 50
 
 # Columns the workers table can be sorted by, mirroring the table's own columns.
 WORKER_SORT_NUMERIC_FIELDS = frozenset(
@@ -87,14 +89,20 @@ class BrowserView:
     workers_sort_ascending: bool = True
     processors_page: int = 0
     stream_page: int = 0
+    task_log_page: int = 0
+    task_events_page: int = 0
+    task_events_task: str = ""  # show only this task's events; empty shows every task
     stream_window_minutes: int = DEFAULT_STREAM_WINDOW_MINUTES
     memory_scale: str = "linear"
 
     def apply_view(self, view: Dict[str, Any]) -> None:
         """Apply a browser's `view` message, ignoring anything unrecognised."""
-        for name in ("workers_page", "processors_page", "stream_page"):
+        for name in ("workers_page", "processors_page", "stream_page", "task_log_page", "task_events_page"):
             if name in view:
                 setattr(self, name, max(0, int(view[name])))
+
+        if "task_events_task" in view:
+            self.task_events_task = str(view["task_events_task"])
 
         if "workers_sort" in view:
             field = view["workers_sort"]
@@ -209,11 +217,14 @@ def _current_task_label(processor_statuses) -> str:
     return f"{len(busy)} tasks"
 
 
-def paginate(items: List[Any], page: int, size: int) -> Tuple[List[Any], int, int]:
-    """Slice `items` into the requested page, clamped to what exists: (rows, page, total pages)."""
+def paginate(items: Collection[Any], page: int, size: int) -> Tuple[List[Any], int, int]:
+    """Take the requested page of `items`, clamped to what exists: (rows, page, total pages).
+
+    Walks to the page rather than slicing, so a deque of retained rows costs the page, not a copy.
+    """
     total_pages = max(1, (len(items) + size - 1) // size)
     page = min(max(page, 0), total_pages - 1)
-    return items[page * size : page * size + size], page, total_pages
+    return list(itertools.islice(items, page * size, page * size + size)), page, total_pages
 
 
 def _format_worker_name(worker_name: str, cutoff: int = 15) -> str:
@@ -844,12 +855,14 @@ class WebUIApp:
         self._scheduler_data: Dict[str, Any] = {}
         self._workers_data: Dict[str, Dict[str, Any]] = {}
         self._worker_capabilities: Dict[str, Dict[str, int]] = {}
+        # One row per task, newest first, rewritten in place as the task moves. `_task_log_by_id` holds
+        # the same row objects, so a state change costs a lookup rather than a walk of the log.
         self._task_log: Deque[Dict[str, Any]] = deque(maxlen=self._task_log_max_size)
+        self._task_log_by_id: Dict[str, Dict[str, Any]] = {}
         # Append-only history: one row per state change rather than one row per task, so a task that is
         # rebalanced, cancelled and retried leaves a trail instead of overwriting itself.
         self._task_events: Deque[Dict[str, Any]] = deque(maxlen=self._task_log_max_size)
         self._task_event_seq: int = 0
-        self._active_tasks: Dict[str, Dict[str, Any]] = {}  # task_id_hex -> entry (running tasks)
         self._task_id_to_function: Dict[str, str] = {}
         self._task_stream = TaskStreamState()
         self._memory_chart = MemoryChartState()
@@ -916,10 +929,9 @@ class WebUIApp:
                 except queue.Empty:
                     break
 
-            # Process messages
             has_scheduler_update = False
             has_object_update = False
-            new_task_logs: List[Dict[str, Any]] = []
+            has_task_update = False
             worker_events: List[Dict[str, Any]] = []
 
             for msg in messages:
@@ -932,15 +944,15 @@ class WebUIApp:
                         if event:
                             worker_events.append(event)
                     elif isinstance(msg, StateTask):
-                        log_entry = self._process_task_state(msg)
+                        self._process_task_state(msg)
                         self._record_task_event(msg)
-                        if log_entry:
-                            new_task_logs.append(log_entry)
+                        has_task_update = True
                     elif isinstance(msg, StateObject):
                         self._process_objects(msg)
                         has_object_update = True
                     elif isinstance(msg, StateBalanceAdvice):
                         self._record_balance_advice(msg)
+                        has_task_update = True
                 except Exception:
                     _logger.exception("error processing scheduler message")
 
@@ -959,11 +971,6 @@ class WebUIApp:
             if worker_events:
                 shared["worker_events"] = worker_events
 
-            if new_task_logs:
-                shared["task_updates"] = new_task_logs
-                shared["task_log_total"] = self._task_log_total
-                shared["task_events"] = list(self._task_events)
-
             if has_scheduler_update:
                 shared["worker_managers"] = list(self._worker_managers_data.values())
                 shared["storage"] = self._storage_data
@@ -980,6 +987,8 @@ class WebUIApp:
                     **(self._workers_section(view, cache) if has_scheduler_update else {}),
                     **(self._machines_section() if has_scheduler_update else {}),
                     **(self._processors_section(view, cache) if has_scheduler_update else {}),
+                    **(self._task_log_section(view) if has_task_update else {}),
+                    **(self._task_events_section(view) if has_task_update else {}),
                     "task_stream": self._stream_section(view, cache),
                     "memory_chart": cache.memory(
                         self, cache.stream(self, view.stream_window_minutes)["window"], view.memory_scale
@@ -1308,81 +1317,60 @@ class WebUIApp:
         full_client = state_task.client.decode(errors="replace") if state_task.client else ""
         client_str = _format_client_name(full_client) if full_client else ""
 
-        if any(state_task.state == s for s in COMPLETED_TASK_STATUSES):
-            # preserve worker/client/time from active entry if completion message lacks them
-            prev_entry = self._active_tasks.pop(task_id_hex, None)
-            if not worker_str and prev_entry:
-                worker_str = prev_entry.get("worker", "")
-                full_worker = prev_entry.get("full_worker", "")
-            if not full_client and prev_entry:
-                full_client = prev_entry.get("full_client", "")
-                client_str = prev_entry.get("client", "")
-            self._count_task_outcome(full_client, state_task.state)
-            submitted_time = prev_entry["time"] if prev_entry and "time" in prev_entry else now.timestamp()
-            self._task_id_to_function.pop(task_id_hex, None)
-
-            duration_str = "N/A"
-            peak_mem_str = "N/A"
-            if state_task.metadata != b"":
-                try:
-                    profile = ProfileResult.deserialize(state_task.metadata)
-                    duration_str = f"{profile.duration_s:.2f}s"
-                    peak_mem_str = format_bytes(profile.memory_peak) if profile.memory_peak != 0 else "0"
-                    # back-compute submitted time when no prior entry exists (late-connect)
-                    if not prev_entry:
-                        submitted_time = now.timestamp() - profile.duration_s
-                except struct.error:
-                    pass
-
+        entry = self._task_log_by_id.get(task_id_hex)
+        first_sighting = entry is None
+        if entry is None:
             entry = {
                 "task_id": task_id_hex,
-                "function": func_name,
-                "worker": worker_str,
-                "full_worker": full_worker,
-                "client": client_str,
-                "full_client": full_client,
-                "time": submitted_time,
-                "duration": duration_str,
-                "peak_mem": peak_mem_str,
-                "status": state_task.state.name,
-                "objects": format_bytes(state_task.objectBytes) if state_task.objectBytes else "\u2014",
-                "object_bytes": state_task.objectBytes,
-                "capabilities": caps_str,
+                "time": now.timestamp(),
+                "worker": "",
+                "full_worker": "",
+                "client": "",
+                "full_client": "",
             }
-            self._task_log.appendleft(entry)
-            self._task_log_total += 1
+            self.__remember_task(entry)
+
+        # A later message that omits the worker or the client keeps what the task already carried.
+        if worker_str:
+            entry["worker"], entry["full_worker"] = worker_str, full_worker
+        if full_client:
+            entry["client"], entry["full_client"] = client_str, full_client
+
+        entry["function"] = func_name
+        entry["status"] = state_task.state.name
+        entry["capabilities"] = caps_str
+        entry["objects"] = format_bytes(state_task.objectBytes) if state_task.objectBytes else "\u2014"
+        entry["object_bytes"] = state_task.objectBytes
+        entry["duration"] = ""
+        entry["peak_mem"] = ""
+
+        if not any(state_task.state == s for s in COMPLETED_TASK_STATUSES):
             return entry
-        else:
-            # running/inactive/canceling - track as active task
-            prev_entry = self._active_tasks.get(task_id_hex)
-            submitted_time = prev_entry["time"] if prev_entry and "time" in prev_entry else now.timestamp()
-            if not worker_str and prev_entry:
-                worker_str = prev_entry.get("worker", "")
-                full_worker = prev_entry.get("full_worker", "")
-            if not full_client and prev_entry:
-                full_client = prev_entry.get("full_client", "")
-                client_str = prev_entry.get("client", "")
-            # remove stale completed entry if task was re-submitted
-            self._task_log = deque(
-                (e for e in self._task_log if e["task_id"] != task_id_hex), maxlen=self._task_log_max_size
-            )
-            entry = {
-                "task_id": task_id_hex,
-                "function": func_name,
-                "worker": worker_str,
-                "full_worker": full_worker,
-                "client": client_str,
-                "full_client": full_client,
-                "time": submitted_time,
-                "duration": "",
-                "peak_mem": "",
-                "status": state_task.state.name,
-                "objects": format_bytes(state_task.objectBytes) if state_task.objectBytes else "\u2014",
-                "object_bytes": state_task.objectBytes,
-                "capabilities": caps_str,
-            }
-            self._active_tasks[task_id_hex] = entry
-            return entry
+
+        self._count_task_outcome(entry["full_client"], state_task.state)
+        self._task_id_to_function.pop(task_id_hex, None)
+        self._task_log_total += 1
+
+        entry["duration"] = "N/A"
+        entry["peak_mem"] = "N/A"
+        if state_task.metadata != b"":
+            try:
+                profile = ProfileResult.deserialize(state_task.metadata)
+                entry["duration"] = f"{profile.duration_s:.2f}s"
+                entry["peak_mem"] = format_bytes(profile.memory_peak) if profile.memory_peak != 0 else "0"
+                # back-compute submitted time for a task this GUI never saw start
+                if first_sighting:
+                    entry["time"] = now.timestamp() - profile.duration_s
+            except struct.error:
+                pass
+        return entry
+
+    def __remember_task(self, entry: Dict[str, Any]) -> None:
+        """Put a newly seen task at the top of the log, dropping the oldest once the log is full."""
+        if self._task_log and len(self._task_log) == self._task_log_max_size:
+            self._task_log_by_id.pop(self._task_log[-1]["task_id"], None)
+        self._task_log.appendleft(entry)
+        self._task_log_by_id[entry["task_id"]] = entry
 
     def _enrich_stream_with_managers(self, stream_data: Dict[str, Any]) -> None:
         """Add per-row manager IDs and a manager color legend to task stream data."""
@@ -1459,6 +1447,34 @@ class WebUIApp:
         """Every connected client. There are far fewer clients than workers, so this page is not paged."""
         rows = sorted(self._clients_data.values(), key=lambda row: row["full_client"])
         return {"clients": rows, "clients_total": len(rows)}
+
+    def _task_log_section(self, view: BrowserView) -> Dict[str, Any]:
+        """One page of the task list: one row per retained task, newest first."""
+        rows, page, total_pages = paginate(self._task_log, view.task_log_page, TASK_LOG_PAGE_SIZE)
+        view.task_log_page = page
+        return {
+            "task_log": rows,
+            "task_log_page": page,
+            "task_log_pages": total_pages,
+            "task_log_held": len(self._task_log),
+            "task_log_total": self._task_log_total,
+        }
+
+    def _task_events_section(self, view: BrowserView) -> Dict[str, Any]:
+        """One page of the task log: one row per state change, newest first, one task's or every task's."""
+        events: Collection[Dict[str, Any]] = self._task_events
+        if view.task_events_task:
+            events = [event for event in self._task_events if event["task_id"] == view.task_events_task]
+
+        rows, page, total_pages = paginate(events, view.task_events_page, TASK_EVENTS_PAGE_SIZE)
+        view.task_events_page = page
+        return {
+            "task_events": rows,
+            "task_events_page": page,
+            "task_events_pages": total_pages,
+            "task_events_held": len(events),
+            "task_events_task": view.task_events_task,
+        }
 
     def _machines_section(self) -> Dict[str, Any]:
         """One row per physical machine, however many workers it hosts.
@@ -1663,12 +1679,6 @@ class WebUIApp:
         cache = _RenderCache()
         stream_data = self._stream_section(view, cache)
         memory_data = cache.memory(self, stream_data["window"], view.memory_scale)
-        # combine active + completed for initial task log, sorted by time (newest first). _active_tasks is
-        # unbounded (one entry per running task), so cap the snapshot to the display size -- at thousands of
-        # concurrent tasks the browser only shows task_log_max_size rows anyway, and the rest stream in.
-        initial_task_log = list(self._active_tasks.values()) + list(self._task_log)
-        initial_task_log.sort(key=lambda e: e.get("time", 0), reverse=True)
-        initial_task_log = initial_task_log[: self._task_log_max_size]
         # Build scheduler data with a last_seen derived from the periodic heartbeat.
         sched = dict(self._scheduler_data) if self._scheduler_data else {}
         sched.update(self.__scheduler_liveness())
@@ -1680,10 +1690,8 @@ class WebUIApp:
             **self._clients_section(),
             "storage": self._storage_data,
             **self._objects_section(),
-            "task_log": initial_task_log,
-            "task_events": list(self._task_events),
-            "task_log_max_size": self._task_log_max_size,
-            "task_log_total": self._task_log_total,
+            **self._task_log_section(view),
+            **self._task_events_section(view),
             "task_stream": stream_data,
             "memory_chart": memory_data,
             **self._processors_section(view, cache),
@@ -1699,6 +1707,8 @@ class WebUIApp:
             **self._workers_section(view, cache),
             **self._machines_section(),
             **self._processors_section(view, cache),
+            **self._task_log_section(view),
+            **self._task_events_section(view),
             "task_stream": stream_data,
             "memory_chart": cache.memory(self, stream_data["window"], view.memory_scale),
             "settings": view.settings(),

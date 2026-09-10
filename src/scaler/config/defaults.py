@@ -110,10 +110,9 @@ DEFAULT_LOGGING_PATHS = ("/dev/stdout",)
 # Pushing faster mostly redraws the same picture: one tick is about a pixel over the stream's 5 minute window.
 DEFAULT_GUI_BROADCAST_INTERVAL_SECONDS = 0.5
 
-# maximum number of completed tasks the web GUI retains and shows in the task log
-# The GUI pages through this server-side, so the browser only ever holds one page: the cap bounds the
-# scheduler's memory, not what is browsable. 500 was low enough that a busy cluster lost history within
-# seconds.
+# tasks the web GUI retains, and the state changes it retains alongside them. The GUI pages through both
+# server-side, so a browser holds one page whatever this is: the cap bounds the GUI process's memory, not
+# what is browsable. 500 was low enough that a busy cluster lost its history within seconds.
 DEFAULT_GUI_TASK_LOG_MAX_SIZE = 50_000
 
 # =======================
