@@ -677,7 +677,15 @@ function setupWorkerSort() {
 }
 setupWorkerSort();
 
-var WORKER_GAUGE_FIELDS = {"agt_cpu": 1, "agt_rss": 1, "proc_cpu": 1, "proc_rss": 1, "mem_used_pct": 1};
+// Columns drawn as a bar rather than as text, and the row field each is a fraction of. A number is a
+// fixed maximum; a string names another field of the same row.
+var WORKER_GAUGE_FIELDS = {
+    "agt_cpu": {max: 100, unit: "%"},
+    "agt_rss": {max: "total_rss", unit: ""},
+    "proc_cpu": {max: 100, unit: "%"},
+    "proc_rss": {max: "total_rss", unit: ""},
+    "mem_used_pct": {max: 100, unit: "%"}
+};
 
 function createWorkerRow(w) {
     var tr = document.createElement("tr");
@@ -728,25 +736,26 @@ function setGauge(td, value, max, unit) {
     td._gaugeValue.textContent = value + (unit || "");
 }
 
+// Cells are filled from WORKER_FIELDS, the same list the row was built from, so a new column is one
+// entry there and one header rather than a renumbering of everything after it.
 function updateWorkerRow(tr, w) {
-    var cells = tr.children;
-    cells[0].textContent = w.name;
-    cells[0].title = w.full_name || w.name;
-    cells[1].textContent = w.manager_id || "—";
-    setGauge(cells[2], w.agt_cpu, 100, "%");
-    setGauge(cells[3], w.agt_rss, w.total_rss, "");
-    setGauge(cells[4], w.proc_cpu, 100, "%");
-    setGauge(cells[5], w.proc_rss, w.total_rss, "");
-    setGauge(cells[6], w.mem_used_pct, 100, "%");
-    cells[6].title = w.mem_limit ? (w.mem_used + " / " + w.mem_limit + " MB used") : "";
-    cells[7].textContent = w.free;
-    cells[8].textContent = w.sent;
-    cells[9].textContent = w.queued;
-    cells[10].textContent = w.suspended;
-    cells[11].textContent = w.lag;
-    cells[12].textContent = w.itl;
-    cells[13].textContent = w.last_seen;
-    cells[14].textContent = w.capabilities;
+    for (var i = 0; i < WORKER_FIELDS.length; i++) {
+        var field = WORKER_FIELDS[i];
+        var gauge = WORKER_GAUGE_FIELDS[field];
+        if (gauge) {
+            setGauge(tr.children[i], w[field], typeof gauge.max === "string" ? w[gauge.max] : gauge.max, gauge.unit);
+        } else {
+            tr.children[i].textContent = (w[field] === undefined || w[field] === null || w[field] === "")
+                ? "—" : w[field];
+        }
+    }
+    workerCell(tr, "name").title = w.full_name || w.name;
+    workerCell(tr, "host").title = w.host;
+    workerCell(tr, "mem_used_pct").title = w.mem_limit ? (w.mem_used + " / " + w.mem_limit + " MB used") : "";
+}
+
+function workerCell(tr, field) {
+    return tr.querySelector('[data-field="' + field + '"]');
 }
 
 function handleWorkerEvents(events) {

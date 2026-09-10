@@ -471,9 +471,13 @@ th.sort-desc::after {
     content: "\2013";
 }
 
-/* Settings */
-.settings-card {
-    max-width: 400px;
+/* A host name is as long as the operator's naming scheme; elide it rather than let one column push the
+   rest of the workers table off the screen. The cell keeps the whole name for its tooltip. */
+#workers-table td[data-field="host"] {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .toggle-group {
