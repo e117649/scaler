@@ -17,7 +17,7 @@
         <button class="tab" data-tab="tasklist">Task List</button>
         <button class="tab" data-tab="tasklog">Task Log</button>
         <button class="tab" data-tab="stream">Worker Task Stream</button>
-        <button class="tab" data-tab="processors">Worker Processors</button>
+        <button class="tab" data-tab="workers">Workers</button>
         <button class="tab" data-tab="machines">Machines</button>
         <button class="tab" data-tab="clients">Clients</button>
         <button class="tab" data-tab="objects">Objects</button>
@@ -307,26 +307,24 @@
     <div class="tab-panel" id="panel-objects">
         <div class="card">
             <div class="card-head">
-                <h2>Objects <span class="muted" id="objects-total"></span></h2>
-                <p class="muted">
-                    The biggest objects the scheduler tracks, and the live tasks that name each one as their
-                    function or as an argument. An object with no task is held by its client alone.
-                </p>
+                <h2 title="The biggest objects the scheduler tracks, of everything the store holds">Objects <span class="muted" id="objects-total"></span></h2>
             </div>
             <div class="table-wrap">
+                <div class="pager pager-top" id="objects-pager-top"></div>
                 <table class="data-table" id="objects-table">
                     <thead>
                         <tr>
-                            <th>Object</th>
+                            <th title="The object ID's unique tag; the half before it identifies the owning client">Object</th>
                             <th>Name</th>
                             <th>Type</th>
-                            <th>Size</th>
-                            <th>Client</th>
-                            <th>Tasks</th>
+                            <th title="Payload bytes">Size</th>
+                            <th title="The client that created the object">Client</th>
+                            <th title="Live tasks naming this object as their function or as an argument; an object with none is held by its client alone">Tasks</th>
                         </tr>
                     </thead>
                     <tbody id="objects-body"></tbody>
                 </table>
+                <div class="pager" id="objects-pager"></div>
             </div>
         </div>
     </div>

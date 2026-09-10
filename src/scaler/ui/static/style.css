@@ -433,24 +433,110 @@ th.sort-desc::after {
     color: var(--text);
 }
 
-.manager-group .processor-group {
+.manager-group .worker-card {
     margin-left: 16px;
 }
 
-.processor-group {
+/* One card per worker: what it is running on the left, what is queued behind it on the right. */
+.worker-card {
     margin-bottom: 16px;
 }
 
-.processor-group summary {
+.worker-card-header {
     cursor: pointer;
-    font-weight: 600;
-    font-size: 15px;
-    padding: 8px 0;
     user-select: none;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 8px 0;
 }
 
-.processor-group summary:hover {
+.worker-card-header:hover .worker-card-name {
     color: var(--accent);
+}
+
+.worker-card-name {
+    font-weight: 600;
+    font-size: 15px;
+}
+
+.worker-card-stats {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.worker-card-stat b {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.pill {
+    border-radius: 999px;
+    padding: 1px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--gauge-track);
+    color: var(--text-muted);
+}
+
+.pill-running {
+    background: var(--accent);
+    color: #ffffff;
+}
+
+.pill-queued {
+    background: var(--warning);
+    color: #1e293b;
+}
+
+.worker-card-body {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.worker-processors {
+    flex: 1 1 520px;
+    overflow-x: auto;
+}
+
+.worker-queue {
+    flex: 0 1 280px;
+    min-width: 240px;
+    border-left: 1px solid var(--border);
+    padding-left: 16px;
+}
+
+.worker-queue h4 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.queue-list {
+    list-style: none;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.queue-list li {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    padding: 2px 0;
+    font-size: 12px;
+}
+
+.queue-function {
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .bool-indicator {

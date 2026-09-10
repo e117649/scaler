@@ -6,6 +6,7 @@ only exists here.
 
 import unittest
 
+from scaler.config import defaults
 from scaler.config.section.scheduler import SchedulerConfig
 from scaler.config.types.address import AddressConfig
 from scaler.protocol.capnp import ObjectMetadata, Task
@@ -70,6 +71,16 @@ class TestLargestObjects(unittest.TestCase):
 
         self.assertEqual([detail.name for detail in largest], [b"unsized"])
         self.assertEqual(largest[0].size, 0)
+
+
+class TestObjectReportLimit(unittest.TestCase):
+    def test_the_report_carries_what_the_scheduler_is_configured_to_send(self) -> None:
+        """The limit is what a monitor can page through, and what each report costs."""
+        controller = make_config_controller()
+        self.assertEqual(controller.get_config("object_report_limit"), defaults.OBJECT_REPORT_LIMIT)
+
+        controller.update_config("object_report_limit", 25)
+        self.assertEqual(controller.get_config("object_report_limit"), 25)
 
 
 class TestTaskIdsByObject(unittest.TestCase):

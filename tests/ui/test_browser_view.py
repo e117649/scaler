@@ -8,7 +8,7 @@ import unittest
 
 from scaler.config.types.address import AddressConfig
 from scaler.ui.app import (
-    PROCESSORS_PAGE_SIZE,
+    WORKER_DETAILS_PAGE_SIZE,
     WORKERS_PAGE_SIZE,
     BrowserView,
     WebGUIConfig,
@@ -127,30 +127,30 @@ class TestWorkersSection(unittest.TestCase):
         self.assertNotEqual(first["workers"][0]["name"], second["workers"][0]["name"])
 
 
-class TestProcessorsSection(unittest.TestCase):
+class TestWorkerDetailsSection(unittest.TestCase):
     def test_detail_is_paged_while_summaries_cover_the_fleet(self) -> None:
         app = make_app(0)
-        worker_count = PROCESSORS_PAGE_SIZE * 2
+        worker_count = WORKER_DETAILS_PAGE_SIZE * 2
         app._worker_processors = {
             f"worker-{index}": {
                 "name": f"worker-{index}",
                 "full_name": f"worker-{index}",
                 "manager_id": "pod-1",
                 "rss_free": 0,
-                "processors": [{"rss": 10, "cpu": 1.0, "has_task": True}],
+                "processors": [{"rss": 10, "cpu": 1.0, "has_task": True, "task_id": ""}],
             }
             for index in range(worker_count)
         }
         app._worker_managers_data = {"pod-1": {"manager_id": "pod-1"}}
 
-        section = app._processors_section(BrowserView(), _RenderCache())
-        group = section["processors"][0]
+        section = app._worker_details_section(BrowserView(), _RenderCache())
+        group = section["worker_details"][0]
 
-        self.assertEqual(len(group["workers"]), PROCESSORS_PAGE_SIZE)  # one page of detail
+        self.assertEqual(len(group["workers"]), WORKER_DETAILS_PAGE_SIZE)  # one page of detail
         self.assertEqual(group["worker_count"], worker_count)  # summary still covers every worker
         self.assertEqual(group["total_processors"], worker_count)
-        self.assertEqual(section["processors_total"], worker_count)
-        self.assertEqual(section["processors_pages"], 2)
+        self.assertEqual(section["worker_details_total"], worker_count)
+        self.assertEqual(section["worker_details_pages"], 2)
 
 
 if __name__ == "__main__":

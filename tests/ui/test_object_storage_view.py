@@ -6,6 +6,7 @@ name each object, because the store never sees a task.
 
 import struct
 import unittest
+from typing import List, Optional
 
 from scaler.config.types.address import AddressConfig
 from scaler.io.mixins import ObjectStorageTotals
@@ -21,7 +22,7 @@ from scaler.protocol.capnp import (
     TaskManagerStatus,
     WorkerManagerStatus,
 )
-from scaler.ui.app import WebGUIConfig, WebUIApp
+from scaler.ui.app import OBJECTS_PAGE_SIZE, BrowserView, WebGUIConfig, WebUIApp, _RenderCache
 
 
 def make_app() -> WebUIApp:
@@ -105,8 +106,9 @@ class TestStorageCard(unittest.TestCase):
         self.assertIn("storage", app._storage_section())
 
 
-def make_objects(*object_ids: bytes, name: bytes = b"payload") -> StateObject:
+def make_objects(*object_ids: bytes, name: bytes = b"payload", sizes: Optional[List[int]] = None) -> StateObject:
     """A StateObject as the GUI receives it: field reads need a deserialized struct."""
+    payload_sizes = sizes if sizes is not None else [1] * len(object_ids)
     return StateObject.from_bytes(
         StateObject(
             objects=[
@@ -114,12 +116,12 @@ def make_objects(*object_ids: bytes, name: bytes = b"payload") -> StateObject:
                     objectId=object_id,
                     name=name,
                     objectType=ObjectMetadata.ObjectContentType.object,
-                    size=1,
+                    size=payload_sizes[index],
                     creator=b"Client|one",
                     taskIds=[],
                     taskCount=0,
                 )
-                for object_id in object_ids
+                for index, object_id in enumerate(object_ids)
             ],
             totalObjects=len(object_ids),
         ).to_bytes()
@@ -147,7 +149,7 @@ class TestObjectsView(unittest.TestCase):
         )
         app._process_objects(state)
 
-        section = app._objects_section()
+        section = app._objects_section(BrowserView(), _RenderCache())
         self.assertEqual(section["objects_total"], 9)
         row = section["objects"][0]
         self.assertEqual(row["name"], "heavy_frame")
@@ -162,19 +164,45 @@ class TestObjectsView(unittest.TestCase):
         owner = b"o" * 16
         app._process_objects(make_objects(owner + b"1" * 16, owner + b"2" * 16))
 
-        rows = app._objects_section()["objects"]
+        rows = app._objects_section(BrowserView(), _RenderCache())["objects"]
         self.assertNotEqual(rows[0]["object"], rows[1]["object"])
         self.assertEqual(rows[0]["object_id"], (owner + b"1" * 16).hex(), "the tooltip keeps the whole id")
 
-    def test_a_generated_name_is_cut_to_fit_its_column(self) -> None:
-        """A client that names nothing gets a generated name long enough to break the table."""
+    def test_a_browser_is_sent_one_page_of_objects(self) -> None:
+        app = make_app()
+        app._process_objects(make_objects(*[bytes([index]) * 32 for index in range(120)]))
+
+        section = app._objects_section(BrowserView(), _RenderCache())
+        self.assertEqual(len(section["objects"]), OBJECTS_PAGE_SIZE)
+        self.assertEqual(section["objects_held"], 120)
+        self.assertEqual(section["objects_pages"], 3)
+
+        second = app._objects_section(BrowserView(objects_page=1), _RenderCache())["objects"]
+        self.assertNotEqual(second[0]["object_id"], section["objects"][0]["object_id"])
+
+    def test_objects_sort_by_the_size_behind_the_cell(self) -> None:
+        app = make_app()
+        app._process_objects(make_objects(b"a" * 32, b"b" * 32, sizes=[9_000, 2_000_000]))
+
+        view = BrowserView(objects_sort="size", objects_sort_ascending=False)
+        rows = app._objects_section(view, _RenderCache())["objects"]
+        self.assertEqual([row["size"] for row in rows], ["1.9M", "8K"])
+
+    def test_a_generated_name_shows_the_kind_of_object_it_names(self) -> None:
+        """A client that names nothing gets a repr of the object id, which the Object column already is."""
         app = make_app()
         generated = f"<obj ObjectID(owner_hash={'a' * 32}, object_tag={'b' * 32})>".encode()
         app._process_objects(make_objects(b"a" * 32, name=generated))
 
-        row = app._objects_section()["objects"][0]
-        self.assertLess(len(row["name"]), len(generated.decode()))
+        row = app._objects_section(BrowserView(), _RenderCache())["objects"][0]
+        self.assertEqual(row["name"], "<obj>")
         self.assertEqual(row["full_name"], generated.decode(), "the tooltip keeps the whole name")
+
+    def test_a_name_the_client_chose_is_kept(self) -> None:
+        app = make_app()
+        app._process_objects(make_objects(b"a" * 32, name=b"frame_007"))
+
+        self.assertEqual(app._objects_section(BrowserView(), _RenderCache())["objects"][0]["name"], "frame_007")
 
 
 if __name__ == "__main__":

@@ -13,6 +13,10 @@ CLEANUP_INTERVAL_SECONDS = 1
 # should raise it via -sri.
 STATUS_REPORT_INTERVAL_SECONDS = 1
 
+# how many objects each status report carries, biggest first, and so how deep a monitor can page through
+# them. Measured at about 240 bytes an object per report, against a store whose object count is unbounded.
+OBJECT_REPORT_LIMIT = 500
+
 # number of seconds for profiling
 PROFILING_INTERVAL_SECONDS = 1
 

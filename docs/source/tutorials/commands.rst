@@ -277,6 +277,11 @@ Scheduler arguments
      - No
      - ``1``
      - Interval between status reports the scheduler publishes to monitors (``scaler_top``/``scaler_gui``).
+   * - ``-orl``, ``--object-report-limit``
+     - No
+     - ``500``
+     - Biggest objects each status report carries, which is how many the web GUI can page through. Each
+       one costs the report about 240 bytes.
 
 .. list-table:: Policy options
    :header-rows: 1

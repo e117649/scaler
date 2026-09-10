@@ -80,14 +80,14 @@ Open ``http://127.0.0.1:50001`` in your browser.
 What the Web GUI shows:
 
 * **Live**: scheduler metrics, worker manager summary, and worker-level metrics (CPU/PSS/free/sent/queued/lag/ITL).
-* **Task List**: one row per task, with its client, worker, duration, peak memory and capabilities.
-* **Task Log**: one row per state change in the order it happened, so a task that is rebalanced or retried leaves its whole trail.
+* **Task List**: one row per task, with its client, worker, duration, peak memory and capabilities. Click a column header to sort the whole retained list by it.
+* **Task Log**: one row per state change in the order it happened, so a task that is rebalanced or retried leaves its whole trail. Click a row to see one task's trail alone.
 * **Worker Task Stream**: a timeline by worker with capability colors and status overlays (failed and canceled patterns).
 * **Memory Usage**: rolling cluster memory chart sampled from what the fleet is holding.
-* **Worker Processors**: manager-grouped view of processor-level CPU/PSS and state flags (initialized, has task, suspended).
+* **Workers**: one card per worker, grouped by manager: the task each processor is running and for how long, and the queue waiting behind them.
 * **Machines**: one row per host, with its workers, CPU, memory and host-wide network counters.
 * **Clients**: one row per connected client, with its host, tasks in flight, finished and failed counts, CPU, memory and latency. Finished counts every task that reached a terminal state, cancelled ones included.
-* **Objects**: the biggest objects the scheduler tracks, with their size, the client that created them, and the tasks holding them.
+* **Objects**: the biggest objects the scheduler tracks, with their size, the client that created them, and the tasks holding them, a page at a time.
 
 The Live tab also carries an Object Storage card: how many objects the storage server holds, how many
 distinct payloads are behind them, the bytes they occupy, and how many requests are waiting for an object
