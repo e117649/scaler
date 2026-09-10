@@ -168,6 +168,8 @@ Everything written here (comments, docstrings, docs, commit messages, logs, CLI 
 
 - The point first, rationale only when the reader could not reconstruct it.
 - One idea per sentence, one topic per paragraph, active voice, about 25 words at most.
+- One sentence or bullet per line, unwrapped: the editor and the renderer wrap, and an edit touches one line.
+- A sentence or bullet fits the formatter's 120 characters (`pyproject.toml`), comments included, Markdown exempt.
 - Plain punctuation: a semicolon or em dash marks a sentence to split.
 - Plain verbs: start (not spin up), analyze (not perform an analysis).
 - Concrete: the command, the field, the measurement, never an intensifier.
@@ -188,7 +190,7 @@ Everything written here (comments, docstrings, docs, commit messages, logs, CLI 
 
 ### Documentation and this file
 
-- Flat: a heading, then one-line bullets, one rule each, unwrapped.
+- Flat: a heading, then bullets, one rule each.
 - A section answers one question and is named for its subject, a page for what it holds.
 - One owner per fact, everything else links to it, and a move repoints every link in the same change.
 - Bold marks lead-in labels only.
