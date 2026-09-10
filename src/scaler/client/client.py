@@ -83,7 +83,9 @@ class Client:
         :param stream_output: If True, stdout/stderr will be streamed to client during task execution
         :type stream_output: bool
         :param object_storage_address: Override object storage address (e.g., for Docker/Kubernetes port mapping).
-                                       If None, will use address received from scheduler.
+                                       If None, a client inside a worker uses the address its worker reaches
+                                       storage on, and a client outside one uses the address the scheduler
+                                       advertises.
         :type object_storage_address: Optional[str]
         """
         self.__initialize__(
@@ -125,6 +127,7 @@ class Client:
         self._backend: NetworkBackend = get_network_backend_from_env()
 
         self._scheduler_address = self.__resolve_scheduler_address(address)
+        object_storage_address = self.__resolve_object_storage_address(object_storage_address)
         self._timeout_seconds = timeout_seconds
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
 
@@ -832,3 +835,22 @@ class Client:
 
         # Return the scheduler address from the current processor
         return current_processor.scheduler_address()
+
+    @staticmethod
+    def __resolve_object_storage_address(address: Optional[str]) -> Optional[str]:
+        """Resolve the object storage address from the given address and the worker context.
+
+        A client inside a worker reaches the storage server the way its worker does. Falling through to
+        the scheduler's advertisement would hand it the address meant for clients outside the cluster,
+        which is a different endpoint wherever workers and clients are on different networks.
+
+        None means the scheduler's advertised address, which is what a client outside a worker uses.
+        """
+        if address is not None:
+            return address
+
+        current_processor = Processor.get_current_processor() if Processor is not None else None
+        if current_processor is None:
+            return None
+
+        return str(current_processor.object_storage_address())

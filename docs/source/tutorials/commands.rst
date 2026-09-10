@@ -75,6 +75,38 @@ sections as separate processes.
 
     scaler <toml config file>
 
+.. _split-network-addresses:
+
+Object storage on a split network
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Where clients reach the object storage server at a different address than the workers do -- a Kubernetes
+service with a load balancer in front of it, say -- each participant is told the address that works from
+where it runs:
+
+- ``[scheduler] object_storage_address`` is the address the scheduler itself connects on.
+- ``[scheduler] advertised_object_storage_address`` is the address the scheduler tells clients about. Set it
+  to the one clients outside the cluster use.
+- ``[[worker_manager]] object_storage_address`` is the address its workers connect on. Set it to the one
+  inside the cluster; without it the workers use the advertised address, which is the client's.
+- A client opened inside a worker connects the way its worker does, so it needs no configuration.
+- ``Client(object_storage_address=...)`` overrides all of this for one client.
+
+.. code-block:: toml
+
+    [object_storage_server]
+    bind_address = "tcp://0.0.0.0:6379"
+
+    [scheduler]
+    bind_address = "tcp://0.0.0.0:6378"
+    object_storage_address = "tcp://scaler-object-storage:6379"
+    advertised_object_storage_address = "tcp://scaler.example.com:6379"
+
+    [[worker_manager]]
+    type = "baremetal_native"
+    scheduler_address = "tcp://scaler-scheduler:6378"
+    object_storage_address = "tcp://scaler-object-storage:6379"
+
 Scaler examples
 ~~~~~~~~~~~~~~~
 
