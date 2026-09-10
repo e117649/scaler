@@ -850,6 +850,10 @@ class WebUIApp:
         self._browsers: Dict[int, BrowserStream] = {}
         self._browsers_lock = threading.Lock()
         self._browser_ids = itertools.count(1)
+        # The batcher thread writes the state below and a browser's own thread reads it to answer that
+        # browser's connect and view requests. Held across a whole payload, so a reader never sees a
+        # half-applied frame or a collection the batcher is rewriting.
+        self._state_lock = threading.Lock()
 
         # server-side state
         self._scheduler_data: Dict[str, Any] = {}
@@ -922,79 +926,84 @@ class WebUIApp:
     def _batch_loop(self) -> None:
         """Drain the message queue every broadcast interval and push to browsers."""
         while not self._stopped.wait(self._broadcast_interval_seconds):
-            messages: List[BaseMessage] = []
-            while True:
-                try:
-                    messages.append(self._message_queue.get_nowait())
-                except queue.Empty:
-                    break
+            with self._state_lock:
+                self._batch_once()
 
-            has_scheduler_update = False
-            has_object_update = False
-            has_task_update = False
-            worker_events: List[Dict[str, Any]] = []
+    def _batch_once(self) -> None:
+        """One tick: apply everything the subscriber queued, then queue each browser its own payload."""
+        messages: List[BaseMessage] = []
+        while True:
+            try:
+                messages.append(self._message_queue.get_nowait())
+            except queue.Empty:
+                break
 
-            for msg in messages:
-                try:
-                    if isinstance(msg, StateScheduler):
-                        self._process_scheduler(msg)
-                        has_scheduler_update = True
-                    elif isinstance(msg, StateWorker):
-                        event = self._process_worker_state(msg)
-                        if event:
-                            worker_events.append(event)
-                    elif isinstance(msg, StateTask):
-                        self._process_task_state(msg)
-                        self._record_task_event(msg)
-                        has_task_update = True
-                    elif isinstance(msg, StateObject):
-                        self._process_objects(msg)
-                        has_object_update = True
-                    elif isinstance(msg, StateBalanceAdvice):
-                        self._record_balance_advice(msg)
-                        has_task_update = True
-                except Exception:
-                    _logger.exception("error processing scheduler message")
+        has_scheduler_update = False
+        has_object_update = False
+        has_task_update = False
+        worker_events: List[Dict[str, Any]] = []
 
-            if has_scheduler_update:
-                self._last_scheduler_heartbeat_time = datetime.datetime.now()
+        for msg in messages:
+            try:
+                if isinstance(msg, StateScheduler):
+                    self._process_scheduler(msg)
+                    has_scheduler_update = True
+                elif isinstance(msg, StateWorker):
+                    event = self._process_worker_state(msg)
+                    if event:
+                        worker_events.append(event)
+                elif isinstance(msg, StateTask):
+                    self._process_task_state(msg)
+                    self._record_task_event(msg)
+                    has_task_update = True
+                elif isinstance(msg, StateObject):
+                    self._process_objects(msg)
+                    has_object_update = True
+                elif isinstance(msg, StateBalanceAdvice):
+                    self._record_balance_advice(msg)
+                    has_task_update = True
+            except Exception:
+                _logger.exception("error processing scheduler message")
 
-            # The parts every browser gets identically.
-            shared: Dict[str, Any] = {}
+        if has_scheduler_update:
+            self._last_scheduler_heartbeat_time = datetime.datetime.now()
 
-            # Always include scheduler data with a last_seen derived from the periodic heartbeat.
-            if self._scheduler_data:
-                sched = dict(self._scheduler_data)
-                sched.update(self.__scheduler_liveness())
-                shared["scheduler"] = sched
+        # The parts every browser gets identically.
+        shared: Dict[str, Any] = {}
 
-            if worker_events:
-                shared["worker_events"] = worker_events
+        # Always include scheduler data with a last_seen derived from the periodic heartbeat.
+        if self._scheduler_data:
+            sched = dict(self._scheduler_data)
+            sched.update(self.__scheduler_liveness())
+            shared["scheduler"] = sched
 
-            if has_scheduler_update:
-                shared["worker_managers"] = list(self._worker_managers_data.values())
-                shared["storage"] = self._storage_data
-                shared.update(self._clients_section())
+        if worker_events:
+            shared["worker_events"] = worker_events
 
-            if has_object_update:
-                shared.update(self._objects_section())
+        if has_scheduler_update:
+            shared["worker_managers"] = list(self._worker_managers_data.values())
+            shared["storage"] = self._storage_data
+            shared.update(self._clients_section())
 
-            # The paged parts differ per browser; the fleet-wide work behind them is shared via the cache.
-            cache = _RenderCache()
-            self._send_to_browsers(
-                lambda view: {
-                    **shared,
-                    **(self._workers_section(view, cache) if has_scheduler_update else {}),
-                    **(self._machines_section() if has_scheduler_update else {}),
-                    **(self._processors_section(view, cache) if has_scheduler_update else {}),
-                    **(self._task_log_section(view) if has_task_update else {}),
-                    **(self._task_events_section(view) if has_task_update else {}),
-                    "task_stream": self._stream_section(view, cache),
-                    "memory_chart": cache.memory(
-                        self, cache.stream(self, view.stream_window_minutes)["window"], view.memory_scale
-                    ),
-                }
-            )
+        if has_object_update:
+            shared.update(self._objects_section())
+
+        # The paged parts differ per browser; the fleet-wide work behind them is shared via the cache.
+        cache = _RenderCache()
+        self._send_to_browsers(
+            lambda view: {
+                **shared,
+                **(self._workers_section(view, cache) if has_scheduler_update else {}),
+                **(self._machines_section() if has_scheduler_update else {}),
+                **(self._processors_section(view, cache) if has_scheduler_update else {}),
+                **(self._task_log_section(view) if has_task_update else {}),
+                **(self._task_events_section(view) if has_task_update else {}),
+                "task_stream": self._stream_section(view, cache),
+                "memory_chart": cache.memory(
+                    self, cache.stream(self, view.stream_window_minutes)["window"], view.memory_scale
+                ),
+            }
+        )
 
     def _process_scheduler(self, data: StateScheduler) -> None:
         self._scheduler_data = {
@@ -1643,26 +1652,6 @@ class WebUIApp:
             )
         return result
 
-    def _drain_pending_messages(self) -> None:
-        """Process any pending messages from the queue immediately.
-
-        Called before building a full-state snapshot so a freshly connected
-        browser always sees the latest data."""
-        while True:
-            try:
-                msg = self._message_queue.get_nowait()
-            except queue.Empty:
-                break
-            try:
-                if isinstance(msg, StateScheduler):
-                    self._process_scheduler(msg)
-                elif isinstance(msg, StateWorker):
-                    self._process_worker_state(msg)
-                elif isinstance(msg, StateTask):
-                    self._process_task_state(msg)
-            except Exception:
-                _logger.exception("error processing scheduler message during drain")
-
     def __scheduler_liveness(self) -> Dict[str, Any]:
         """last_seen + stale flag derived from the last StateScheduler heartbeat."""
         if self._last_scheduler_heartbeat_time is None:
@@ -1671,11 +1660,16 @@ class WebUIApp:
         return {"last_seen": format_seconds(elapsed), "stale": elapsed > self._scheduler_stale_seconds}
 
     def get_full_state(self, view: BrowserView) -> Dict[str, Any]:
-        """Get complete current state for one client, in that client's view."""
-        # Flush any messages that arrived since the last batch-loop iteration so
-        # the snapshot is as fresh as possible.
-        self._drain_pending_messages()
+        """Get complete current state for one client, in that client's view.
 
+        Built from what the batcher has processed. Anything still queued arrives one broadcast interval
+        later, on the tick that processes it, which is why this never drains the queue itself: only the
+        batcher thread writes this state.
+        """
+        with self._state_lock:
+            return self.__full_state(view)
+
+    def __full_state(self, view: BrowserView) -> Dict[str, Any]:
         cache = _RenderCache()
         stream_data = self._stream_section(view, cache)
         memory_data = cache.memory(self, stream_data["window"], view.memory_scale)
@@ -1701,6 +1695,10 @@ class WebUIApp:
 
     def view_update(self, view: BrowserView) -> Dict[str, Any]:
         """The paged sections for one client, answered on its change instead of at the next tick."""
+        with self._state_lock:
+            return self.__view_update(view)
+
+    def __view_update(self, view: BrowserView) -> Dict[str, Any]:
         cache = _RenderCache()
         stream_data = self._stream_section(view, cache)
         return {
