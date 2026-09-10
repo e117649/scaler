@@ -83,8 +83,9 @@ class Client:
         :param stream_output: If True, stdout/stderr will be streamed to client during task execution
         :type stream_output: bool
         :param object_storage_address: Override object storage address (e.g., for Docker/Kubernetes port mapping).
-                                       If None, a client inside a worker uses its worker's address. Any
-                                       other client uses the address the scheduler advertises.
+                                       If None, a client inside a worker given no scheduler address uses
+                                       its worker's address. Any other client uses the address the
+                                       scheduler advertises.
         :type object_storage_address: Optional[str]
         """
         self.__initialize__(
@@ -125,7 +126,7 @@ class Client:
         self._backend: NetworkBackend = get_network_backend_from_env()
 
         self._scheduler_address = self.__resolve_scheduler_address(address)
-        object_storage_address = self.__resolve_object_storage_address(object_storage_address)
+        object_storage_address = self.__resolve_object_storage_address(address, object_storage_address)
         self._timeout_seconds = timeout_seconds
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
 
@@ -821,14 +822,19 @@ class Client:
         return current_processor.scheduler_address()
 
     @staticmethod
-    def __resolve_object_storage_address(address: Optional[str]) -> Optional[str]:
+    def __resolve_object_storage_address(
+        scheduler_address: Optional[str], object_storage_address: Optional[str]
+    ) -> Optional[str]:
         """The address to reach object storage on, None to use the one the scheduler advertises.
 
-        A client inside a worker takes its worker's address. The advertised address is for clients
-        outside the cluster and need not resolve from inside it.
+        A client inside a worker takes its worker's address only if it takes its worker's scheduler too.
+        A client given a scheduler address may be on another cluster, and uses what that one advertises.
         """
-        if address is not None:
-            return address
+        if object_storage_address is not None:
+            return object_storage_address
+
+        if scheduler_address is not None:
+            return None
 
         current_processor = Processor.get_current_processor() if Processor is not None else None
         if current_processor is None:

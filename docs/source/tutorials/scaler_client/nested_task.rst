@@ -17,11 +17,13 @@ This pattern is useful to demonstrate nested execution, but recursion creates ma
 Nested client addresses
 -----------------------
 
-A nested ``Client`` takes both its addresses from the worker context when they are omitted.
-Pass either argument to override it.
+A nested ``Client`` given neither address takes both from the worker context.
 
 - ``address``: the scheduler address its worker is connected to.
 - ``object_storage_address``: the address its worker reaches object storage on.
+
+Pass ``address`` to reach another scheduler. Object storage is then the address that scheduler
+advertises. Pass ``object_storage_address`` to set it directly.
 
 This matters where the addresses a worker uses differ from the ones outside the cluster, for example
 behind NAT or a load balancer. See :ref:`object-storage-addresses`.

@@ -349,7 +349,7 @@ when a load balancer fronts the server.
 - ``[scheduler] advertised_object_storage_address``: the address clients outside the cluster connect on.
 - ``[[worker_manager]] object_storage_address``: the address its workers connect on, otherwise the advertised address.
 - ``Client(object_storage_address=...)``: the address one client connects on, otherwise the advertised address.
-- A client opened inside a worker connects on its worker's address.
+- A client opened inside a worker connects on its worker's address, unless it is given either address.
 
 .. code-block:: toml
 
