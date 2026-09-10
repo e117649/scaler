@@ -96,6 +96,20 @@ class TestTaskLogPaging(unittest.TestCase):
         self.assertEqual({row["task_id"] for row in section["task_events"]}, {wanted})
         self.assertEqual([row["event"] for row in section["task_events"]], ["success", "running"])
 
+    def test_a_result_still_names_the_worker_that_ran_the_task(self) -> None:
+        """A result message carries no worker, so a bare "success" row would say nothing about where."""
+        app = make_app()
+        task_id = (1).to_bytes(32, "big")
+        for state, worker in ((TaskState.running, b"w1"), (TaskState.success, b"")):
+            task = make_task(taskId=task_id, functionName=b"work", state=state, worker=worker, client=b"Client|one")
+            app._process_task_state(task)
+            app._record_task_event(task)
+
+        events = app._task_events_section(BrowserView())["task_events"]
+        self.assertEqual([row["event"] for row in events], ["success", "running"])
+        self.assertEqual({row["worker"] for row in events}, {"w1"})
+        self.assertEqual({row["client"] for row in events}, {"Client|one"})
+
     def test_a_rebalance_leaves_its_own_row(self) -> None:
         app = make_app()
         run_tasks(app, 1)

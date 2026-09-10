@@ -1433,39 +1433,54 @@ class WebUIApp:
 
     def _record_task_event(self, state_task: StateTask) -> None:
         """One immutable row per state change, so the sequence a task went through stays readable."""
+        task_id = state_task.taskId.hex()
         worker = state_task.worker.decode() if state_task.worker else ""
         client = state_task.client.decode(errors="replace") if state_task.client else ""
-        self._task_event_seq += 1
-        self._task_events.appendleft(
-            {
-                "seq": self._task_event_seq,
-                "time": datetime.datetime.now().strftime("%H:%M:%S"),
-                "task_id": state_task.taskId.hex(),
-                "function": state_task.functionName.decode(errors="replace") if state_task.functionName else "",
-                "event": state_task.state.name,
-                "worker": _format_worker_name(worker) if worker else "\u2014",
-                "client": _format_client_name(client) if client else "\u2014",
-                "detail": format_bytes(state_task.objectBytes) if state_task.objectBytes else "",
-            }
+        self.__append_task_event(
+            task_id=task_id,
+            event=state_task.state.name,
+            worker=worker,
+            client=client,
+            function=state_task.functionName.decode(errors="replace") if state_task.functionName else "",
+            detail=format_bytes(state_task.objectBytes) if state_task.objectBytes else "",
         )
 
     def _record_balance_advice(self, advice: StateBalanceAdvice) -> None:
         """A rebalance moves tasks off a worker; without this the trail just shows them reappearing."""
         worker = advice.workerId.decode() if advice.workerId else ""
         for task_id in advice.taskIds:
-            self._task_event_seq += 1
-            self._task_events.appendleft(
-                {
-                    "seq": self._task_event_seq,
-                    "time": datetime.datetime.now().strftime("%H:%M:%S"),
-                    "task_id": bytes(task_id).hex(),
-                    "function": "",
-                    "event": "rebalance",
-                    "worker": _format_worker_name(worker) if worker else "\u2014",
-                    "client": "\u2014",
-                    "detail": "moved off this worker",
-                }
+            self.__append_task_event(
+                task_id=bytes(task_id).hex(),
+                event="rebalance",
+                worker=worker,
+                client="",
+                function="",
+                detail="moved off this worker",
             )
+
+    def __append_task_event(
+        self, task_id: str, event: str, worker: str, client: str, function: str, detail: str
+    ) -> None:
+        """A row of the trail.
+
+        A result message names neither the worker that ran the task nor the client that submitted it, so
+        those fall back to what the task's own row already carries: a row reading "success" against no
+        worker says nothing about where the task ran.
+        """
+        known = self._task_log_by_id.get(task_id, {})
+        self._task_event_seq += 1
+        self._task_events.appendleft(
+            {
+                "seq": self._task_event_seq,
+                "time": datetime.datetime.now().strftime("%H:%M:%S"),
+                "task_id": task_id,
+                "function": function or known.get("function", ""),
+                "event": event,
+                "worker": _format_worker_name(worker) if worker else known.get("worker", "") or "\u2014",
+                "client": _format_client_name(client) if client else known.get("client", "") or "\u2014",
+                "detail": detail,
+            }
+        )
 
     def _storage_section(self) -> Dict[str, Any]:
         """The object storage card, absent until the scheduler has reported once.
