@@ -488,9 +488,12 @@ class TaskStreamState:
                 self._worker_capabilities[worker_str] = set()
 
             if task_state == TaskState.running:
-                self._handle_running_task(state_task, worker_str, now)
+                self._note_dispatched_task(state_task, worker_str)
 
-    def _handle_running_task(self, state_task: StateTask, worker: str, now: datetime.datetime) -> None:
+    def _note_dispatched_task(self, state_task: StateTask, worker: str) -> None:
+        """Remember what a task is and where it went. A dispatched task is not a running one: the
+        scheduler reports it running as soon as it sends it, and the worker may hold it queued for
+        minutes, so nothing is drawn until a processor picks it up."""
         task_id = state_task.taskId
         caps = _display_capabilities(set(capabilities_to_dict(state_task.capabilities).keys()))
         self._task_id_to_capabilities[task_id] = caps
@@ -508,10 +511,29 @@ class TaskStreamState:
         self._task_id_to_worker[task_id] = worker
         self._worker_to_task_ids.setdefault(worker, set()).add(task_id)
 
-        # only set start time if this is a new task (don't overwrite on repeated Running messages)
-        task_map = self._current_tasks.setdefault(worker, {})
-        if task_id not in task_map:
-            task_map[task_id] = now
+    def handle_worker_processors(self, worker: str, running: List[Tuple[bytes, int]]) -> None:
+        """What this worker's processors are on right now, and how long each has been on it.
+
+        The age the worker reports is where the bar begins, so a task the monitor never saw start still
+        draws from the right place.
+        """
+        now = datetime.datetime.now()
+
+        with self._lock:
+            self._ensure_worker(worker, now)
+            started = self._current_tasks.setdefault(worker, {})
+            held = {task_id for task_id, _ in running}
+            for task_id, age_seconds in running:
+                self._task_id_to_worker[task_id] = worker
+                self._worker_to_task_ids.setdefault(worker, set()).add(task_id)
+                started.setdefault(task_id, now - datetime.timedelta(seconds=age_seconds))
+
+            # a task no processor holds has finished or moved on; its result is what draws the bar
+            for task_id in [task_id for task_id in started if task_id not in held]:
+                started.pop(task_id)
+
+            if not started:
+                self._current_tasks.pop(worker, None)
 
     def _handle_task_result(self, state: StateTask, now: datetime.datetime) -> None:
         task_id = state.taskId
@@ -1164,12 +1186,9 @@ class WebUIApp:
             self._worker_managers_data.pop(mid, None)
 
         current_workers = set()
-        now = datetime.datetime.now()
         for worker_data in data.workerManager.workers:
             worker_name = worker_data.workerId.decode()
             current_workers.add(worker_name)
-            # ensure task stream knows about this worker (handles late UI connect)
-            self._task_stream._ensure_worker(worker_name, now)
             total_proc_cpu = sum(p.resource.cpu for p in worker_data.processorStatuses)
             total_proc_rss = sum(p.resource.rss for p in worker_data.processorStatuses)
             total_rss = int(total_proc_rss / 1e6)
@@ -1228,10 +1247,13 @@ class WebUIApp:
                 "processors": [],
             }
             max_rss = 0
+            running_tasks: List[Tuple[bytes, int]] = []
             for ps in sorted(worker_data.processorStatuses, key=lambda x: x.pid):
                 rss_val = int(ps.resource.rss / 1e6)
                 if ps.resource.rss > max_rss:
                     max_rss = ps.resource.rss
+                if ps.hasTask:
+                    running_tasks.append((bytes(ps.currentTaskId), ps.taskAgeSeconds))
                 task_id = bytes(ps.currentTaskId).hex() if ps.hasTask else ""
                 self._worker_processors[worker_name]["processors"].append(
                     {
@@ -1248,6 +1270,9 @@ class WebUIApp:
                         "task_age": format_seconds(ps.taskAgeSeconds) if ps.hasTask else "\u2014",
                     }
                 )
+
+            # the stream draws what the processors hold, so a queued task is not a bar
+            self._task_stream.handle_worker_processors(worker_name, running_tasks)
 
         # remove dead workers
         dead = set(self._workers_data.keys()) - current_workers
