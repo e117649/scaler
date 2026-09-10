@@ -1370,7 +1370,8 @@ function buildWorkerProcessorDetail(wp) {
     var thead = document.createElement("thead");
     var headerRow = document.createElement("tr");
     // memory columns are PSS on Linux, RSS on macOS/Windows (see get_process_memory)
-    var headers = ["PID", "CPU %", "PSS (MB)", "Max PSS (MB)", "Initialized", "Has Task", "Suspended"];
+    var headers = ["PID", "Task", "For", "CPU %", "PSS (MB)", "Max PSS (MB)", "Initialized", "Has Task",
+                   "Suspended"];
     for (var h = 0; h < headers.length; h++) {
         var th = document.createElement("th");
         th.textContent = headers[h];
@@ -1384,6 +1385,8 @@ function buildWorkerProcessorDetail(wp) {
         var proc = wp.processors[p];
         var tr = document.createElement("tr");
         var tdPid = document.createElement("td"); tdPid.textContent = proc.pid; tr.appendChild(tdPid);
+        tr.appendChild(makeCell(proc.task));
+        tr.appendChild(makeCell(proc.task_age));
         var tdCpu = document.createElement("td"); tdCpu.innerHTML = makeGaugeHTML(proc.cpu, 100, "%"); tr.appendChild(tdCpu);
         var tdRss = document.createElement("td"); tdRss.innerHTML = makeGaugeHTML(proc.rss, proc.rss_max_gauge, ""); tr.appendChild(tdRss);
         var tdMax = document.createElement("td"); tdMax.innerHTML = makeGaugeHTML(proc.max_rss, proc.rss_max_gauge, ""); tr.appendChild(tdMax);
