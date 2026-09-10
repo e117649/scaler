@@ -17,12 +17,16 @@ from scaler.worker.agent.processor_holder import ProcessorHolder
 
 def _host_network_counters() -> Tuple[int, int]:
     """Host-wide bytes sent and received. Every worker on a host reports the same pair, which is what
-    lets the monitor read it once per hostname instead of summing a figure 64 times."""
-    if psutil is None:
-        return 0, 0
+    lets the monitor read it once per hostname instead of summing a figure 64 times.
+
+    Zero when the host has no counters to read, which is a missing metric and not a reason to stop a
+    heartbeat the scheduler needs.
+    """
     try:
         counters = psutil.net_io_counters()
-    except Exception:
+    except (RuntimeError, OSError):
+        return 0, 0
+    if counters is None:
         return 0, 0
     return int(counters.bytes_sent), int(counters.bytes_recv)
 

@@ -78,7 +78,7 @@ class WebGUIRequestHandler(BaseHTTPRequestHandler):
         update["type"] = "view_update"
         self.__send_bytes(json.dumps(update).encode(), "application/json")
 
-    def log_message(self, format: str, *args) -> None:  # noqa: A002, the base class names the argument
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002, the base class names it
         logger.debug("%s %s", self.address_string(), format % args)
 
     def __read_json_body(self) -> Optional[dict]:
@@ -154,14 +154,13 @@ class WebGUIRequestHandler(BaseHTTPRequestHandler):
         content_type, _ = mimetypes.guess_type(path.name)
         # Every asset is served from the running package. A cached copy of an older one is only ever a
         # way for a browser to disagree with the server it is talking to.
-        self.__send_bytes(path.read_bytes(), content_type or "application/octet-stream", cache=False)
+        self.__send_bytes(path.read_bytes(), content_type or "application/octet-stream")
 
-    def __send_bytes(self, body: bytes, content_type: str, cache: bool = False) -> None:
+    def __send_bytes(self, body: bytes, content_type: str) -> None:
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        if not cache:
-            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.end_headers()
         self.wfile.write(body)
 

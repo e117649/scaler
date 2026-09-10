@@ -9,7 +9,7 @@ import struct
 import threading
 from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Collection, Deque, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Collection, Deque, Dict, Iterable, List, Optional, Set, Tuple
 
 from scaler.config.section.webgui import WebGUIConfig
 from scaler.io.mixins import SyncSubscriber
@@ -18,6 +18,7 @@ from scaler.io.utility import generate_identity_from_name
 from scaler.protocol.capnp import (
     BaseMessage,
     ObjectManagerStatus,
+    ProcessorStatus,
     StateBalanceAdvice,
     StateObject,
     StateScheduler,
@@ -58,6 +59,10 @@ OBJECT_TAG_OFFSET = 16
 # How much of a task or object ID the monitor shows. Enough to pick one out of a page, short enough that
 # a row of them still reads.
 TASK_ID_DISPLAY_LENGTH = 12
+
+# The memory chart's axis never reads below this, so an idle cluster is a flat line near the bottom
+# rather than noise filling the plot.
+MEMORY_CHART_MINIMUM_BYTES = 1024**3
 
 # Payloads one browser may fall behind by before its stream is dropped. It reconnects and is sent a
 # full state, which is cheaper than growing a queue nobody is reading.
@@ -202,7 +207,7 @@ class _RenderCache:
         return self._memory[key]
 
 
-def _oldest_task_age(processor_statuses) -> int:
+def _oldest_task_age(processor_statuses: Iterable[ProcessorStatus]) -> int:
     """Age of the longest-running task on a worker, 0 when it is idle.
 
     The oldest is the interesting one: a worker wedged on a single task shows an age that keeps climbing.
@@ -211,7 +216,7 @@ def _oldest_task_age(processor_statuses) -> int:
     return max(ages) if ages else 0
 
 
-def _current_task_label(processor_statuses) -> str:
+def _current_task_label(processor_statuses: Iterable[ProcessorStatus]) -> str:
     """Short id of the task a worker is running, or a count when it is running several."""
     busy = [status for status in processor_statuses if status.hasTask]
     if not busy:
@@ -816,23 +821,16 @@ class MemoryChartState:
         if not chart_points or chart_points[-1]["x"] < -0.1:
             chart_points.append({"x": 0, "y": max(running_mem, 0)})
 
-        # compute y-axis ticks
-        max_mem = max((p["y"] for p in chart_points), default=0)
-        max_mem = max(max_mem, 1024 * 1024 * 1024)  # minimum 1GB
-        y_ticks = []
-        for i in range(5):
-            val = int(max_mem * i / 4)
-            y_ticks.append({"val": val, "label": format_bytes(val)})
-
         live_memory, live_cpu = self._live_series(now_ts, window_seconds)
         if live_memory:
             # prefer what the fleet is actually holding over the figure derived from finished tasks
             chart_points = live_memory
-            max_live = max(point["y"] for point in live_memory)
-            y_ticks = [
-                {"val": int(max(max_live, 1024**3) * i / 4), "label": format_bytes(int(max(max_live, 1024**3) * i / 4))}
-                for i in range(5)
-            ]
+
+        max_mem = max((point["y"] for point in chart_points), default=0)
+        max_mem = max(max_mem, MEMORY_CHART_MINIMUM_BYTES)
+        y_ticks = [
+            {"val": int(max_mem * step / 4), "label": format_bytes(int(max_mem * step / 4))} for step in range(5)
+        ]
 
         return {
             "points": chart_points,
