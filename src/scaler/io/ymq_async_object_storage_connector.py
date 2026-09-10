@@ -122,8 +122,9 @@ class YMQAsyncObjectStorageConnector(AsyncObjectStorageConnector):
         )
 
     async def info_get_total(self) -> ObjectStorageTotals:
+        """What the storage server holds. One request may be in flight: the answer carries no request id."""
         if self._pending_info_request is not None:
-            return await asyncio.shield(self._pending_info_request)
+            raise ObjectStorageException("an info-get-total request is already in flight.")
 
         self._pending_info_request = asyncio.get_running_loop().create_future()
         try:
