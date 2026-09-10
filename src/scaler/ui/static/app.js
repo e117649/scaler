@@ -551,7 +551,15 @@ function updateObjects(objects, total) {
     if (activeTab === "objects") renderObjects();
 }
 
-var OBJECT_FIELDS = ["object_id", "name", "type", "size", "client", "tasks"];
+var OBJECT_FIELDS = ["object", "name", "type", "size", "client", "tasks"];
+
+// What each column's tooltip carries, when the cell itself is a shortened form.
+var OBJECT_TITLE_FIELDS = {
+    "object": function(o) { return o.object_id || ""; },
+    "name": function(o) { return o.full_name || ""; },
+    "client": function(o) { return o.full_client || ""; },
+    "tasks": function(o) { return (o.task_ids || []).join(" "); }
+};
 
 function renderObjects() {
     objectsBody.innerHTML = "";
@@ -562,9 +570,8 @@ function renderObjects() {
             var field = OBJECT_FIELDS[f];
             var td = document.createElement("td");
             var value = o[field];
-            if (field === "object_id" && value) value = value.slice(0, 12);
-            if (field === "tasks") td.title = o.task_ids.join(" ");
-            if (field === "client") td.title = o.full_client || "";
+            var title = OBJECT_TITLE_FIELDS[field];
+            if (title) td.title = title(o);
             td.textContent = (value === undefined || value === null || value === "") ? "\u2014" : value;
             tr.appendChild(td);
         }

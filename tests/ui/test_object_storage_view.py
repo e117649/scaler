@@ -105,6 +105,27 @@ class TestStorageCard(unittest.TestCase):
         self.assertIn("storage", app._storage_section())
 
 
+def make_objects(*object_ids: bytes, name: bytes = b"payload") -> StateObject:
+    """A StateObject as the GUI receives it: field reads need a deserialized struct."""
+    return StateObject.from_bytes(
+        StateObject(
+            objects=[
+                StateObject.ObjectDetail(
+                    objectId=object_id,
+                    name=name,
+                    objectType=ObjectMetadata.ObjectContentType.object,
+                    size=1,
+                    creator=b"Client|one",
+                    taskIds=[],
+                    taskCount=0,
+                )
+                for object_id in object_ids
+            ],
+            totalObjects=len(object_ids),
+        ).to_bytes()
+    )
+
+
 class TestObjectsView(unittest.TestCase):
     def test_an_object_row_names_its_client_and_its_tasks(self) -> None:
         app = make_app()
@@ -134,6 +155,26 @@ class TestObjectsView(unittest.TestCase):
         self.assertEqual(row["full_client"], "Client|one")
         self.assertEqual(row["tasks"], 57, "the count is the whole set, not the sample that travels with it")
         self.assertEqual(row["task_ids"], ["626262626262", "636363636363"])
+
+    def test_two_objects_of_one_client_are_told_apart(self) -> None:
+        """An object ID starts with its owner's hash, so the head is the same for all of a client's."""
+        app = make_app()
+        owner = b"o" * 16
+        app._process_objects(make_objects(owner + b"1" * 16, owner + b"2" * 16))
+
+        rows = app._objects_section()["objects"]
+        self.assertNotEqual(rows[0]["object"], rows[1]["object"])
+        self.assertEqual(rows[0]["object_id"], (owner + b"1" * 16).hex(), "the tooltip keeps the whole id")
+
+    def test_a_generated_name_is_cut_to_fit_its_column(self) -> None:
+        """A client that names nothing gets a generated name long enough to break the table."""
+        app = make_app()
+        generated = f"<obj ObjectID(owner_hash={'a' * 32}, object_tag={'b' * 32})>".encode()
+        app._process_objects(make_objects(b"a" * 32, name=generated))
+
+        row = app._objects_section()["objects"][0]
+        self.assertLess(len(row["name"]), len(generated.decode()))
+        self.assertEqual(row["full_name"], generated.decode(), "the tooltip keeps the whole name")
 
 
 if __name__ == "__main__":

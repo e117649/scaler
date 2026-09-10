@@ -51,6 +51,10 @@ SLIDING_WINDOW_OPTIONS = {
 
 DEFAULT_STREAM_WINDOW_MINUTES = 5
 
+# An object ID is 16 bytes of owner hash then 16 bytes of unique tag, so every object one client owns
+# starts the same: the tag is what tells two of them apart, and the owner is the row's Client column.
+OBJECT_TAG_OFFSET = 16
+
 # How much of a task or object ID the monitor shows. Enough to pick one out of a page, short enough that
 # a row of them still reads.
 TASK_ID_DISPLAY_LENGTH = 12
@@ -238,6 +242,13 @@ def _format_client_name(client_name: str, cutoff: int = 24) -> str:
     if len(client_name) <= cutoff:
         return client_name
     return client_name[:cutoff] + "+"
+
+
+def _format_object_name(object_name: str, cutoff: int = 40) -> str:
+    """An object a client did not name carries a generated one long enough to break the column."""
+    if len(object_name) <= cutoff:
+        return object_name
+    return object_name[:cutoff] + "+"
 
 
 # Minimum angular distance (degrees) between any two assigned hues.
@@ -1223,10 +1234,14 @@ class WebUIApp:
         for detail in state.objects:
             task_ids = [bytes(task_id).hex()[:TASK_ID_DISPLAY_LENGTH] for task_id in detail.taskIds]
             creator = bytes(detail.creator).decode(errors="replace")
+            object_id = bytes(detail.objectId)
+            name = detail.name.decode(errors="replace")
             rows.append(
                 {
-                    "object_id": bytes(detail.objectId).hex(),
-                    "name": detail.name.decode(errors="replace"),
+                    "object": object_id[OBJECT_TAG_OFFSET:].hex()[:TASK_ID_DISPLAY_LENGTH],
+                    "object_id": object_id.hex(),
+                    "name": _format_object_name(name),
+                    "full_name": name,
                     "type": detail.objectType.name,
                     "size": format_bytes(detail.size),
                     "size_bytes": detail.size,
