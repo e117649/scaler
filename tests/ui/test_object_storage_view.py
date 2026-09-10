@@ -96,6 +96,14 @@ class TestStorageCard(unittest.TestCase):
         self.assertEqual(app._storage_data["pending"], 0)
         self.assertEqual(app._storage_data["oldest_pending"], "0s")
 
+    def test_the_card_is_not_sent_before_the_scheduler_has_reported(self) -> None:
+        """A browser that opens first must keep the page's placeholders, not read zeros as measurements."""
+        app = make_app()
+        self.assertEqual(app._storage_section(), {})
+
+        app._process_scheduler(make_status(ObjectManagerStatus(numberOfObjects=0)))
+        self.assertIn("storage", app._storage_section())
+
 
 class TestObjectsView(unittest.TestCase):
     def test_an_object_row_names_its_client_and_its_tasks(self) -> None:

@@ -982,7 +982,7 @@ class WebUIApp:
 
         if has_scheduler_update:
             shared["worker_managers"] = list(self._worker_managers_data.values())
-            shared["storage"] = self._storage_data
+            shared.update(self._storage_section())
             shared.update(self._clients_section())
             shared.update(self._machines_section())
 
@@ -1452,6 +1452,13 @@ class WebUIApp:
                 }
             )
 
+    def _storage_section(self) -> Dict[str, Any]:
+        """The object storage card, absent until the scheduler has reported once.
+
+        Sending it early would put measured-looking zeros where the page still shows placeholders.
+        """
+        return {"storage": self._storage_data} if self._storage_data else {}
+
     def _clients_section(self) -> Dict[str, Any]:
         """Every connected client. There are far fewer clients than workers, so this page is not paged."""
         rows = sorted(self._clients_data.values(), key=lambda row: row["full_client"])
@@ -1682,7 +1689,7 @@ class WebUIApp:
             **self._workers_section(view, cache),
             **self._machines_section(),
             **self._clients_section(),
-            "storage": self._storage_data,
+            **self._storage_section(),
             **self._objects_section(),
             **self._task_log_section(view),
             **self._task_events_section(view),
