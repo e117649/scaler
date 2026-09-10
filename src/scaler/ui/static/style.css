@@ -500,6 +500,7 @@ th.sort-desc::after {
 
 .toggle-btn {
     flex: 1;
+    white-space: nowrap;
     padding: 6px 14px;
     border: none;
     border-radius: 4px;
