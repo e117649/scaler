@@ -1,5 +1,6 @@
 import asyncio
 import dataclasses
+import heapq
 import logging
 from asyncio import Queue
 from typing import Dict, List, Optional, Set
@@ -128,8 +129,13 @@ class VanillaObjectController(ObjectController, Looper, Reporter):
         return self._object_tracker.object_count()
 
     def get_largest_objects(self, limit: int) -> List[ObjectDetail]:
-        """The `limit` biggest tracked objects, biggest first, which is what a full store is made of."""
-        details = [
+        """The `limit` biggest tracked objects, biggest first, which is what a full store is made of.
+
+        Runs on the scheduler's event loop once a status frame, so it takes the top `limit` with a heap.
+        Sorting every object instead cost seconds once a client had sent a few hundred thousand.
+        """
+        largest = heapq.nlargest(limit, self._object_tracker.items(), key=lambda item: self.get_object_size(item[0]))
+        return [
             ObjectDetail(
                 object_id=object_id,
                 name=creation.object_name,
@@ -137,10 +143,8 @@ class VanillaObjectController(ObjectController, Looper, Reporter):
                 size=self.get_object_size(object_id),
                 creator=creation.object_creator,
             )
-            for object_id, creation in self._object_tracker.items()
+            for object_id, creation in largest
         ]
-        details.sort(key=lambda detail: detail.size, reverse=True)
-        return details[:limit]
 
     def has_object(self, object_id: ObjectID) -> bool:
         return self._object_tracker.has_object(object_id)
