@@ -1,9 +1,6 @@
-"""Which addresses a client opened inside a worker uses.
+"""Which object storage address a client opened inside a worker uses.
 
-A worker and a client outside the cluster do not always reach the same endpoints: an object storage server
-in Kubernetes has a service address its pods use and a load balancer address outside clients use, and the
-scheduler advertises the second one. A client opened inside a worker is inside the cluster, so it has to
-take its worker's addresses rather than what is advertised to the outside.
+It takes its worker's address. The scheduler advertises a different one for clients outside the cluster.
 """
 
 import unittest

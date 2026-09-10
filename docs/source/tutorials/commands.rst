@@ -68,44 +68,11 @@ sections as separate processes.
 - ``[object_storage_server]`` starts the object storage server.
 - ``[[worker_manager]]`` starts one worker manager per table entry.
 - ``object_storage_address`` is required in ``[scheduler]`` and points to the object storage server.
-- ``advertised_object_storage_address`` is optional and lets scheduler advertise a
-  different public object storage endpoint to clients/workers.
+- ``advertised_object_storage_address`` is optional, see :ref:`object-storage-addresses`.
 
 .. code-block:: bash
 
     scaler <toml config file>
-
-.. _split-network-addresses:
-
-Object storage on a split network
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Where clients reach the object storage server at a different address than the workers do -- a Kubernetes
-service with a load balancer in front of it, say -- each participant is told the address that works from
-where it runs:
-
-- ``[scheduler] object_storage_address`` is the address the scheduler itself connects on.
-- ``[scheduler] advertised_object_storage_address`` is the address the scheduler tells clients about. Set it
-  to the one clients outside the cluster use.
-- ``[[worker_manager]] object_storage_address`` is the address its workers connect on. Set it to the one
-  inside the cluster; without it the workers use the advertised address, which is the client's.
-- A client opened inside a worker connects the way its worker does, so it needs no configuration.
-- ``Client(object_storage_address=...)`` overrides all of this for one client.
-
-.. code-block:: toml
-
-    [object_storage_server]
-    bind_address = "tcp://0.0.0.0:6379"
-
-    [scheduler]
-    bind_address = "tcp://0.0.0.0:6378"
-    object_storage_address = "tcp://scaler-object-storage:6379"
-    advertised_object_storage_address = "tcp://scaler.example.com:6379"
-
-    [[worker_manager]]
-    type = "baremetal_native"
-    scheduler_address = "tcp://scaler-scheduler:6378"
-    object_storage_address = "tcp://scaler-object-storage:6379"
 
 Scaler examples
 ~~~~~~~~~~~~~~~
@@ -369,6 +336,30 @@ When ``--protected`` is enabled, client shutdown requests cannot stop the schedu
 .. code-block:: bash
 
     scaler_scheduler tcp://127.0.0.1:8516 --object-storage-address tcp://127.0.0.1:8517 --protected
+
+.. _object-storage-addresses:
+
+Object storage addresses
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Each participant connects to the object storage server on the address configured for it. These differ
+when a load balancer fronts the server.
+
+- ``[scheduler] object_storage_address``: the address the scheduler connects on.
+- ``[scheduler] advertised_object_storage_address``: the address clients outside the cluster connect on.
+- ``[[worker_manager]] object_storage_address``: the address its workers connect on, otherwise the advertised address.
+- ``Client(object_storage_address=...)``: the address one client connects on, otherwise the advertised address.
+- A client opened inside a worker connects on its worker's address.
+
+.. code-block:: toml
+
+    [scheduler]
+    object_storage_address = "tcp://scaler-object-storage:6379"
+    advertised_object_storage_address = "tcp://scaler.example.com:6379"
+
+    [[worker_manager]]
+    type = "baremetal_native"
+    object_storage_address = "tcp://scaler-object-storage:6379"
 
 Event loop selection
 ^^^^^^^^^^^^^^^^^^^^
