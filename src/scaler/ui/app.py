@@ -984,6 +984,7 @@ class WebUIApp:
             shared["worker_managers"] = list(self._worker_managers_data.values())
             shared["storage"] = self._storage_data
             shared.update(self._clients_section())
+            shared.update(self._machines_section())
 
         if has_object_update:
             shared.update(self._objects_section())
@@ -994,7 +995,6 @@ class WebUIApp:
             lambda view: {
                 **shared,
                 **(self._workers_section(view, cache) if has_scheduler_update else {}),
-                **(self._machines_section() if has_scheduler_update else {}),
                 **(self._processors_section(view, cache) if has_scheduler_update else {}),
                 **(self._task_log_section(view) if has_task_update else {}),
                 **(self._task_events_section(view) if has_task_update else {}),
