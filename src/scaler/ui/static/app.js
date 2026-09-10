@@ -658,7 +658,7 @@ function createWorkerRow(w) {
     return tr;
 }
 
-// Static HTML gauge, still used by the processors tree (which is rebuilt wholesale anyway).
+// Gauge as an HTML string, for the tables that are rebuilt wholesale.
 function makeGaugeHTML(value, max, unit) {
     if (max <= 0) max = 100;
     var pct = Math.min(100, (value / max) * 100);
@@ -695,8 +695,7 @@ function setGauge(td, value, max, unit) {
     td._gaugeValue.textContent = value + (unit || "");
 }
 
-// Cells are filled from WORKER_FIELDS, the same list the row was built from, so a new column is one
-// entry there and one header rather than a renumbering of everything after it.
+// Cells are filled from WORKER_FIELDS, the list the row was built from, so column order lives in one place.
 function updateWorkerRow(tr, w) {
     for (var i = 0; i < WORKER_FIELDS.length; i++) {
         var field = WORKER_FIELDS[i];

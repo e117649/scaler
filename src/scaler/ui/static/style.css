@@ -183,6 +183,16 @@ th.sortable {
     user-select: none;
 }
 
+/* Marks anything that carries a tooltip, so the explanation is findable without taking up room. */
+th[title], h2[title], h3[title], .metric-label[title] {
+    text-decoration: underline dotted var(--text-muted);
+    text-underline-offset: 3px;
+}
+
+th[title]:not(.sortable), h2[title], h3[title], .metric-label[title] {
+    cursor: help;
+}
+
 th.sortable:hover {
     color: var(--text);
 }
@@ -674,7 +684,7 @@ body.fit-page #memory-card .memory-container {
     color: var(--text-muted);
 }
 
-/* Controls that used to live in the Settings tab now sit on the widget they affect. */
+/* Each widget carries the controls that affect it. */
 .inline-controls {
     display: flex;
     align-items: center;

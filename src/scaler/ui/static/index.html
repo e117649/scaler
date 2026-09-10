@@ -37,67 +37,67 @@
                     <span class="metric-value" id="sched-cpu">—</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">PSS:</span>
+                    <span class="metric-label" title="PSS on Linux, RSS on macOS and Windows">PSS:</span>
                     <span class="metric-value" id="sched-rss">—</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Mem Free:</span>
+                    <span class="metric-label" title="Free memory on the scheduler's own machine">Mem Free:</span>
                     <span class="metric-value" id="sched-rss-free">—</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Last Seen:</span>
+                    <span class="metric-label" title="Since the scheduler's last status report; it stops arriving when the scheduler's loop stalls">Last Seen:</span>
                     <span class="metric-value" id="sched-last-seen">—</span>
                 </div>
             </div>
         </div>
 
         <div class="card scheduler-card">
-            <h3>Object Storage</h3>
+            <h3 title="What the object storage server itself reports holding, not what the scheduler tracks">Object Storage</h3>
             <div class="scheduler-metrics">
                 <div class="metric">
-                    <span class="metric-label">Objects:</span>
+                    <span class="metric-label" title="Object IDs the server holds">Objects:</span>
                     <span class="metric-value" id="oss-objects">&mdash;</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Unique:</span>
+                    <span class="metric-label" title="Distinct payloads behind those IDs, after deduplication">Unique:</span>
                     <span class="metric-value" id="oss-unique">&mdash;</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Held:</span>
+                    <span class="metric-label" title="Bytes those payloads occupy">Held:</span>
                     <span class="metric-value" id="oss-size">&mdash;</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Shared:</span>
+                    <span class="metric-label" title="IDs that deduplicate onto a payload another ID already has">Shared:</span>
                     <span class="metric-value" id="oss-shared">&mdash;</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Waiting:</span>
+                    <span class="metric-label" title="Requests for an object nobody has created yet; a client blocks in get_object until it exists, so a count that does not fall is a stalled fetch">Waiting:</span>
                     <span class="metric-value" id="oss-pending">&mdash;</span>
                 </div>
                 <div class="metric">
-                    <span class="metric-label">Oldest Wait:</span>
+                    <span class="metric-label" title="How long the oldest of those requests has waited">Oldest Wait:</span>
                     <span class="metric-value" id="oss-oldest">&mdash;</span>
                 </div>
             </div>
         </div>
 
         <div class="card">
-            <h3>Worker Managers</h3>
+            <h3 title="Processes that start and stop workers for the scheduler">Worker Managers</h3>
             <div class="table-wrap">
                 <table class="data-table" id="managers-table">
                     <thead>
                         <tr>
                             <th>Manager ID</th>
-                            <th>Identity</th>
-                            <th>Last Seen</th>
-                            <th>Max Concurrency</th>
+                            <th title="Address the manager connects from">Identity</th>
+                            <th title="Since the manager's last heartbeat">Last Seen</th>
+                            <th title="Tasks one of this manager's workers runs at once">Max Concurrency</th>
                             <th>Workers</th>
-                            <th>Σ CPU %</th>
-                            <th>Σ PSS (MB)</th>
-                            <th>Σ Free</th>
-                            <th>Σ Sent</th>
-                            <th>Σ Queued</th>
-                            <th>Σ Suspended</th>
+                            <th title="Summed over every worker this manager has, not only the page shown below">Σ CPU %</th>
+                            <th title="Summed over every worker this manager has, not only the page shown below">Σ PSS (MB)</th>
+                            <th title="Summed queue slots left across this manager's workers">Σ Free</th>
+                            <th title="Summed tasks sent to this manager's workers and not yet answered">Σ Sent</th>
+                            <th title="Summed tasks waiting in those workers' own queues">Σ Queued</th>
+                            <th title="Summed suspended processors across this manager's workers">Σ Suspended</th>
                             <th>Capabilities</th>
                         </tr>
                     </thead>
@@ -107,30 +107,29 @@
         </div>
 
         <div class="card">
-            <h3>Workers <span class="badge" id="workers-count">0</span></h3>
+            <h3>Workers <span class="badge" id="workers-count" title="Workers in the whole fleet; the table below holds one page of them">0</span></h3>
             <div class="pager pager-top" id="workers-pager-top"></div>
             <div class="table-wrap">
-                <!-- Agt/Proc memory is PSS (proportional set size) on Linux, RSS on macOS/Windows; see get_process_memory. -->
                 <table class="data-table" id="workers-table">
                     <thead>
                         <tr>
                             <th>Worker</th>
                             <th>Manager</th>
                             <th>Host</th>
-                            <th>Task</th>
-                            <th>For</th>
-                            <th>Agt CPU %</th>
-                            <th>Agt PSS (MB)</th>
-                            <th>Proc CPU %</th>
-                            <th>Proc PSS (MB)</th>
-                            <th>Mem %</th>
-                            <th>Free</th>
-                            <th>Sent</th>
-                            <th>Queued</th>
-                            <th>Suspended</th>
-                            <th>Lag</th>
-                            <th>ITL</th>
-                            <th>Last Seen</th>
+                            <th title="Task on a processor right now, or a count when several are">Task</th>
+                            <th title="How long the oldest of those has been running">For</th>
+                            <th title="The worker's agent process, which does not run tasks">Agt CPU %</th>
+                            <th title="PSS on Linux, RSS on macOS and Windows">Agt PSS (MB)</th>
+                            <th title="The processors, which run the tasks">Proc CPU %</th>
+                            <th title="PSS on Linux, RSS on macOS and Windows">Proc PSS (MB)</th>
+                            <th title="In use against the memory limit this worker runs under (its cgroup limit in a pod, else the host total): the number that predicts an OOM kill">Mem %</th>
+                            <th title="Queue slots left on this worker">Free</th>
+                            <th title="Tasks the scheduler has sent here and not yet had an answer for">Sent</th>
+                            <th title="Tasks waiting in the worker's own queue">Queued</th>
+                            <th title="Suspended processors, which hold a task without running it">Suspended</th>
+                            <th title="Round trip the worker last measured to the scheduler">Lag</th>
+                            <th title="Initialized / has task / task lock, from the worker's first unsuspended processor">ITL</th>
+                            <th title="Since this worker's last heartbeat">Last Seen</th>
                             <th>Capabilities</th>
                         </tr>
                     </thead>
@@ -144,21 +143,21 @@
     <!-- Tab: Task Log -->
     <div class="tab-panel" id="panel-tasklist">
         <div class="card">
-            <h3>Task List <span class="badge" id="tasklog-count">0</span></h3>
+            <h3 title="One row per task, rewritten in place as the task moves">Task List <span class="badge" id="tasklog-count" title="Tasks finished since this monitor started; the list also holds the ones still running">0</span></h3>
             <div class="pager pager-top" id="tasklog-pager-top"></div>
             <div class="table-wrap">
                 <table class="data-table" id="tasklog-table">
                     <thead>
                         <tr>
-                            <th>Task ID</th>
+                            <th title="Click an ID to copy it">Task ID</th>
                             <th>Function</th>
-                            <th>Client</th>
-                            <th>Worker</th>
-                            <th>Time</th>
-                            <th>Duration</th>
-                            <th>Peak Mem</th>
-                            <th>Objects</th>
-                            <th>Status</th>
+                            <th title="The client that submitted the task">Client</th>
+                            <th title="The worker the scheduler sent the task to">Worker</th>
+                            <th title="When this monitor first saw the task">Time</th>
+                            <th title="Wall clock the processor spent on the task">Duration</th>
+                            <th title="Highest memory the processor reached while running it">Peak Mem</th>
+                            <th title="Bytes of function and arguments the task moves through object storage">Objects</th>
+                            <th title="State the scheduler reports; running means dispatched to a worker, which may still have it queued">Status</th>
                             <th>Capabilities</th>
                         </tr>
                     </thead>
@@ -174,16 +173,12 @@
     <div class="tab-panel" id="panel-tasklog">
         <div class="card">
             <div class="card-header-row">
-                <h3>Task Log <span class="muted" id="taskevents-count"></span></h3>
+                <h3 title="Every state change in the order it happened, newest first. Rows are never rewritten, so a task that is rebalanced or retried leaves its whole trail. Click a row to see only that task.">Task Log <span class="muted" id="taskevents-count"></span></h3>
                 <div class="inline-controls">
                     <span class="muted" id="taskevents-filter-label"></span>
                     <button class="fit-page-btn" id="taskevents-clear" style="display:none">Show all</button>
                 </div>
             </div>
-            <p class="muted">
-                Every state change in the order it happened, newest first. Rows are never rewritten, so a task
-                that is rebalanced or retried leaves its whole trail. Click a row to see only that task.
-            </p>
             <div class="pager pager-top" id="taskevents-pager-top"></div>
             <div class="table-wrap">
                 <table class="data-table" id="taskevents-table">
@@ -191,9 +186,9 @@
                         <tr>
                             <th>Time</th>
                             <th>Task</th>
-                            <th>Event</th>
+                            <th title="A state the scheduler reported, or a rebalance moving the task off a worker">Event</th>
                             <th>Client</th>
-                            <th>Worker</th>
+                            <th title="The worker the task was on for this event">Worker</th>
                             <th>Function</th>
                             <th>Detail</th>
                         </tr>
@@ -209,7 +204,7 @@
     <div class="tab-panel" id="panel-stream">
         <div class="card" id="stream-card">
             <div class="card-header-row">
-                <h3>Worker Task Stream</h3>
+                <h3 title="One row per worker, one bar per task it actually ran. A bar outlined in yellow is still running.">Worker Task Stream</h3>
                 <div class="inline-controls">
                     <div class="toggle-group" id="window-toggle" title="Sliding window length">
                         <button class="toggle-btn active" data-value="5">5 min</button>
@@ -229,27 +224,23 @@
         </div>
         <div class="card" id="memory-card">
             <div class="card-header-row">
-                <h3>Memory Usage</h3>
+                <h3 title="What the fleet holds, sampled once per scheduler report. The dashed line is fleet CPU, summed across cores and scaled to its own maximum.">Memory Usage</h3>
                 <div class="toggle-group" id="scale-toggle" title="Memory usage scale">
                     <button class="toggle-btn active" data-value="linear">Linear</button>
                     <button class="toggle-btn" data-value="log">Log</button>
                 </div>
             </div>
-            <p class="muted">
-                Sampled live from what the fleet is holding, not summed from finished tasks. CPU is the
-                same samples, as a percentage summed across cores.
-            </p>
             <div class="memory-container">
                 <canvas id="memory-canvas"></canvas>
             </div>
         </div>
     </div>
 
-    <!-- Tab: Worker Processors -->
-    <div class="tab-panel" id="panel-processors">
-        <div class="pager pager-top" id="processors-pager-top"></div>
-        <div id="processors-container"></div>
-        <div class="pager" id="processors-pager"></div>
+    <!-- Tab: Workers -->
+    <div class="tab-panel" id="panel-workers">
+        <div class="pager pager-top" id="workerdetails-pager-top"></div>
+        <div id="workerdetails-container"></div>
+        <div class="pager" id="workerdetails-pager"></div>
     </div>
 
 
@@ -257,11 +248,7 @@
     <div class="tab-panel" id="panel-machines">
         <div class="card">
             <div class="card-head">
-                <h2>Machines <span class="muted" id="machines-total"></span></h2>
-                <p class="muted">
-                    One row per host, however many workers it runs. Network counters are host-wide, so they
-                    are read once per machine rather than summed across its workers.
-                </p>
+                <h2 title="Workers grouped by the host they run on: a box running 64 workers is one row">Machines <span class="muted" id="machines-total"></span></h2>
             </div>
             <div class="table-wrap">
                 <table class="data-table" id="machines-table">
@@ -269,17 +256,17 @@
                         <tr>
                             <th>Host</th>
                             <th>Workers</th>
-                            <th>Busy</th>
-                            <th>Idle</th>
+                            <th title="Workers with a task on a processor">Busy</th>
+                            <th title="Workers with no task on any processor">Idle</th>
                             <th>Managers</th>
-                            <th>CPU %</th>
-                            <th>Used (MB)</th>
-                            <th>Free (MB)</th>
-                            <th>Mem %</th>
-                            <th>Queued</th>
-                            <th>Sent</th>
-                            <th>Net Out</th>
-                            <th>Net In</th>
+                            <th title="Summed across this host's workers, agents included">CPU %</th>
+                            <th title="Summed across this host's workers, agents included">Used (MB)</th>
+                            <th title="Free memory on the host, read once rather than summed">Free (MB)</th>
+                            <th title="Used against used plus free">Mem %</th>
+                            <th title="Summed tasks waiting in this host's worker queues">Queued</th>
+                            <th title="Summed tasks sent to this host's workers and not yet answered">Sent</th>
+                            <th title="Host-wide counter, read once per host rather than summed across its workers">Net Out</th>
+                            <th title="Host-wide counter, read once per host rather than summed across its workers">Net In</th>
                         </tr>
                     </thead>
                     <tbody id="machines-body"></tbody>
@@ -292,27 +279,22 @@
     <div class="tab-panel" id="panel-clients">
         <div class="card">
             <div class="card-head">
-                <h2>Clients <span class="muted" id="clients-total"></span></h2>
-                <p class="muted">
-                    Every client the scheduler currently holds a heartbeat from. Finished counts every task
-                    that reached a terminal state, cancelled ones included, and Failed is the part of it
-                    that raised or lost its worker. Both are counted by this monitor since it started.
-                </p>
+                <h2 title="Every client the scheduler currently holds a heartbeat from">Clients <span class="muted" id="clients-total"></span></h2>
             </div>
             <div class="table-wrap">
                 <table class="data-table" id="clients-table">
                     <thead>
                         <tr>
                             <th>Client</th>
-                            <th>Host</th>
-                            <th>Tasks</th>
-                            <th>Finished</th>
-                            <th>Failed</th>
-                            <th>CPU %</th>
-                            <th>RSS</th>
-                            <th>Latency</th>
-                            <th>Connected</th>
-                            <th>Last Seen</th>
+                            <th title="The machine the client process runs on">Host</th>
+                            <th title="Tasks the scheduler is holding for this client right now">Tasks</th>
+                            <th title="Tasks that reached a terminal state, cancelled ones included, counted by this monitor since it started">Finished</th>
+                            <th title="The part of Finished that raised or lost its worker">Failed</th>
+                            <th title="The client process itself, from its own heartbeat">CPU %</th>
+                            <th title="The client process itself, from its own heartbeat">RSS</th>
+                            <th title="Round trip the client last measured to the scheduler">Latency</th>
+                            <th title="Since the client's first heartbeat">Connected</th>
+                            <th title="Since the client's last heartbeat">Last Seen</th>
                         </tr>
                     </thead>
                     <tbody id="clients-body"></tbody>

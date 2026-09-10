@@ -137,13 +137,11 @@ class BrowserView:
 class BrowserStream:
     """One browser's event stream: what it is looking at, and the payloads waiting to be written to it.
 
-    The batcher only ever appends here, so a browser that reads slowly falls behind on its own queue
-    rather than delaying the others. Past the bound it is closed, which the browser answers by
-    reconnecting and asking for a full state again.
+    The batcher only appends, so a slow browser falls behind on its own queue rather than delaying the
+    others; past the bound it is closed and reconnects for a full state.
 
-    `view` is written by the connection thread when the browser pages or sorts, and read by the batcher
-    when it builds that browser's payload. Each field is set in one assignment, so the worst a race
-    costs is one payload built from a half-applied view, which the next tick corrects.
+    `view` is written by the connection thread and read by the batcher. Each field is set in one
+    assignment, so a race costs one payload built from a half-applied view, which the next tick corrects.
     """
 
     def __init__(self, browser_id: int) -> None:
@@ -748,8 +746,7 @@ class MemoryChartState:
     def __init__(self) -> None:
         self._start_time = datetime.datetime.now()
         self._points: List[Tuple[float, int]] = []  # (timestamp, memory_bytes)
-        # What the fleet is actually using right now, sampled per scheduler update. The derived series
-        # above only ever moved when a task *finished*, so a cluster sitting on held memory read as idle.
+        # What the fleet holds right now, sampled once per scheduler update.
         self._live: List[Tuple[float, int, float]] = []  # (timestamp, rss_bytes, cpu_percent)
         self._memory_store_time = datetime.timedelta(minutes=30)
         self._lock = threading.Lock()
@@ -823,7 +820,7 @@ class MemoryChartState:
 
         live_memory, live_cpu = self._live_series(now_ts, window_seconds)
         if live_memory:
-            # prefer what the fleet is actually holding over the figure derived from finished tasks
+            # the series derived from task profiles is the fallback until the first live sample
             chart_points = live_memory
 
         max_mem = max((point["y"] for point in chart_points), default=0)
@@ -1025,14 +1022,9 @@ class WebUIApp:
 
         self._process_clients(data)
 
-        # Update the worker-to-manager mapping and count workers per manager and across the fleet, in a
-        # single pass while each capnp workerIDs list is freshly accessed. Storing the lazy lists to len()
-        # them in the detail loop below is unreliable -- the references do not survive -- which otherwise
-        # reports 0 workers for every manager past the first. The fleet total also feeds the "N of M"
-        # workers indicator, since each browser receives only a bounded subset of workers.
-        # Key by the decoded manager name (a materialized str), not by the capnp id field: reading that
-        # field more than once per detail returns divergent values under capnp aliasing, so joining the two
-        # loops on it silently misses.
+        # Read each capnp list once, in the same pass, and key by the decoded manager name: the lazy lists
+        # do not survive being stored, and re-reading an id field returns a different value under capnp
+        # aliasing, either of which silently loses every manager past the first.
         manager_worker_counts: Dict[str, int] = {}
         total_workers = 0
         for pair in data.scalingManager.managedWorkers:
@@ -1210,8 +1202,8 @@ class WebUIApp:
     def __storage_section(status: ObjectManagerStatus) -> Dict[str, Any]:
         """What the object storage server holds, and what is stuck waiting on it.
 
-        `pending` counts requests waiting for an object nobody has created yet. A client blocks in
-        `get_object` until that happens, so a number here that does not fall is a stalled fetch.
+        `pending` counts requests for an object nobody has created yet. A client blocks in `get_object`
+        until that happens, so a number here that does not fall is a stalled fetch.
         """
         held = status.storageTotalBytes
         unique = status.storageUniqueCount
@@ -1523,9 +1515,8 @@ class WebUIApp:
     def _machines_section(self) -> Dict[str, Any]:
         """One row per physical machine, however many workers it hosts.
 
-        `netSentBytes`/`netRecvBytes` are host-wide, so every worker on a box reports the same pair;
-        they are read once per hostname rather than summed, which would multiply them by the worker
-        count. Everything else is genuinely per-worker and is added up.
+        `netSentBytes`/`netRecvBytes` are host-wide, so every worker on a box reports the same pair and
+        they are read once per hostname. Everything else is per-worker and is added up.
         """
         machines: Dict[str, Dict[str, Any]] = {}
         for worker in self._workers_data.values():

@@ -16,8 +16,8 @@ from scaler.worker.agent.processor_holder import ProcessorHolder
 
 
 def _host_network_counters() -> Tuple[int, int]:
-    """Host-wide bytes sent and received. Every worker on a host reports the same pair, which is what
-    lets the monitor read it once per hostname instead of summing a figure 64 times.
+    """Host-wide bytes sent and received. Every worker on a host reports the same pair, so the monitor
+    reads it once per hostname rather than summing it across the workers there.
 
     Zero when the host has no counters to read, which is a missing metric and not a reason to stop a
     heartbeat the scheduler needs.
