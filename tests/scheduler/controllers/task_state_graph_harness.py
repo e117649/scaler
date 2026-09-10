@@ -153,6 +153,15 @@ SCENARIOS: Tuple[Scenario, ...] = (
         ),
     ),
     Scenario(
+        "CancelConfirmNotFound (no capacity)",
+        CancelConfirmNotFound(
+            task_id=TASK_ID,
+            worker_id=WORKER_ID,
+            task_cancel_confirm=make_task_cancel_confirm(TaskCancelConfirmType.cancelNotFound),
+        ),
+        capacity_available=False,
+    ),
+    Scenario(
         "TaskResultReceived (stale worker)",
         TaskResultReceived(
             task_id=TASK_ID, worker_id=STALE_WORKER_ID, task_result=make_task_result(TaskResultType.success)

@@ -69,7 +69,7 @@ BalanceCancelTargetStates = Literal[TaskState.balanceCanceling]
 TaskResultTargetStates = Literal[TaskState.success, TaskState.failed, TaskState.failedWorkerDied]
 CancelConfirmCanceledTargetStates = Literal[TaskState.canceled, TaskState.inactive, TaskState.running]
 CancelConfirmFailedTargetStates = Literal[TaskState.running]
-CancelConfirmNotFoundTargetStates = Literal[TaskState.canceledNotFound]
+CancelConfirmNotFoundTargetStates = Literal[TaskState.canceledNotFound, TaskState.inactive, TaskState.running]
 DisconnectTargetStates = Literal[TaskState.inactive, TaskState.running, TaskState.canceled]
 
 
@@ -478,12 +478,17 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         match source:
             case TaskState.running:
                 task_cancel = TaskCancel(taskId=event.task_id, flags=TaskCancel.TaskCancelFlags(force=False))
-                # FIXME: when no worker holds the task, the balance cannot complete and the task is stranded here with
-                # no cancel in flight and no exit path. this preserves the behavior of the transition table, which
-                # rejected the cancelNotFound that this case used to raise. the recovery is a behavior change, either
-                # terminate the task towards the client or reschedule it, so it needs its own review
-                await self.__send_task_cancel_to_worker(task_cancel, TaskState.balanceCanceling)
-                return TaskState.balanceCanceling
+                if await self.__send_task_cancel_to_worker(task_cancel, TaskState.balanceCanceling):
+                    return TaskState.balanceCanceling
+
+                # no worker holds the task, so no cancel is in flight and no confirm can ever arrive. this is the
+                # same stale advice as the arms below, reached from the scheduler side: remove_worker drops every
+                # task mapping of a departing worker at once and only then drains the tasks one await at a time, so
+                # a task can still read running here with its WorkerDisconnected event already queued behind us.
+                # placing it again would race that event into a second dispatch, running the task on two workers and
+                # leaking the queue slot of the first. leave the task running and let the queued event reroute it
+                logger.warning(f"{event.task_id!r}: balance cancel found no worker holding the task, dropping it")
+                return None
             case (
                 TaskState.inactive
                 | TaskState.canceling
@@ -578,11 +583,16 @@ class VanillaTaskController(TaskController, Looper, Reporter):
                 await self.__send_task_cancel_confirm_to_client(event.task_cancel_confirm, TaskState.canceledNotFound)
                 return TaskState.canceledNotFound
             case TaskState.balanceCanceling:
-                # FIXME: strands the task, it has no worker, no cancel in flight and no exit path. this preserves the
-                # behavior of the transition table, which never accepted this transition from balanceCanceling. the
-                # recovery is a behavior change, either terminate the task towards the client or reschedule it, so it
-                # needs its own review
-                return None
+                # the worker does not hold the task, but the scheduler still maps it there. nobody asked the client
+                # for this cancel, so the task must not be terminated: release the stale mapping and place it again,
+                # which is what a balance cancel confirmed as canceled already does
+                worker = self._worker_controller.get_worker_by_task_id(event.task_id)
+                logger.error(
+                    f"{event.task_id!r}: {worker!r} answered a balance cancel with cancelNotFound, the scheduler "
+                    f"mapping is stale, releasing it and placing the task again"
+                )
+                await self._worker_controller.on_task_done(event.task_id)
+                return await self.__acquire_and_dispatch(event.task_id)
             case (
                 TaskState.inactive
                 | TaskState.running
