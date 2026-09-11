@@ -68,8 +68,7 @@ sections as separate processes.
 - ``[object_storage_server]`` starts the object storage server.
 - ``[[worker_manager]]`` starts one worker manager per table entry.
 - ``object_storage_address`` is required in ``[scheduler]`` and points to the object storage server.
-- ``advertised_object_storage_address`` is optional and lets scheduler advertise a
-  different public object storage endpoint to clients/workers.
+- ``advertised_object_storage_address`` is optional, see :ref:`object-storage-addresses`.
 
 .. code-block:: bash
 
@@ -342,6 +341,30 @@ When ``--protected`` is enabled, client shutdown requests cannot stop the schedu
 .. code-block:: bash
 
     scaler_scheduler tcp://127.0.0.1:8516 --object-storage-address tcp://127.0.0.1:8517 --protected
+
+.. _object-storage-addresses:
+
+Object storage addresses
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Each participant connects to the object storage server on the address configured for it. These differ
+when a load balancer fronts the server.
+
+- ``[scheduler] object_storage_address``: the address the scheduler connects on.
+- ``[scheduler] advertised_object_storage_address``: the address clients outside the cluster connect on.
+- ``[[worker_manager]] object_storage_address``: the address its workers connect on, otherwise the advertised address.
+- ``Client(object_storage_address=...)``: the address one client connects on, otherwise the advertised address.
+- A client opened inside a worker connects on its worker's address, unless it is given either address.
+
+.. code-block:: toml
+
+    [scheduler]
+    object_storage_address = "tcp://scaler-object-storage:6379"
+    advertised_object_storage_address = "tcp://scaler.example.com:6379"
+
+    [[worker_manager]]
+    type = "baremetal_native"
+    object_storage_address = "tcp://scaler-object-storage:6379"
 
 Event loop selection
 ^^^^^^^^^^^^^^^^^^^^
