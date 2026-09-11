@@ -5,7 +5,7 @@ The processors name what is on a core, and everything else the worker holds is w
 """
 
 import unittest
-from typing import Any, Dict, List
+from typing import Any, Collection, Dict, List
 
 from scaler.config.types.address import AddressConfig
 from scaler.protocol.capnp import (
@@ -49,15 +49,22 @@ def dispatch(app: WebUIApp, index: int, worker: bytes = WORKER, state: TaskState
     )
 
 
-def report(app: WebUIApp, running: List[int], queued: int = 0, worker: bytes = WORKER) -> None:
-    """One status frame in which `worker` has a processor per running task."""
+def report(
+    app: WebUIApp,
+    running: List[int],
+    queued: int = 0,
+    worker: bytes = WORKER,
+    suspended: Collection[int] = (),
+    rss_bytes: int = 1_000_000,
+) -> None:
+    """One status frame in which `worker` has a processor per running task, `suspended` naming the held ones."""
     processors = [
         ProcessorStatus(
             pid=100 + index,
             initialized=True,
             hasTask=True,
-            suspended=False,
-            resource=Resource(cpu=100, rss=1_000_000),
+            suspended=index in suspended,
+            resource=Resource(cpu=100, rss=rss_bytes),
             currentTaskId=task_id(index),
             taskAgeSeconds=3,
         )
@@ -122,7 +129,36 @@ class TestWorkerQueue(unittest.TestCase):
 
         processor = worker_card(app)["processors"][0]
         self.assertEqual(processor["function"], "work")
-        self.assertEqual(processor["task_id"], task_id(0).hex(), "the whole id, so the card links to its trail")
+        self.assertEqual(processor["task_id"], task_id(0).hex(), "the whole id, so the row links to its trail")
+
+    def test_the_processor_at_work_leads_the_suspended_one(self) -> None:
+        """A suspended processor holds its task while another runs, so the one at work is what the row leads with."""
+        app = make_app()
+        for index in range(2):
+            dispatch(app, index)
+        report(app, running=[0, 1], suspended=[0])
+
+        processors = worker_card(app)["processors"]
+        self.assertEqual([processor["task_id"] for processor in processors], [task_id(1).hex(), task_id(0).hex()])
+
+    def test_a_processor_keeps_the_highest_memory_it_was_seen_at(self) -> None:
+        app = make_app()
+        dispatch(app, 0)
+        for rss_bytes in (3_000_000, 9_000_000, 4_000_000):
+            report(app, running=[0], rss_bytes=rss_bytes)
+
+        processor = worker_card(app)["processors"][0]
+        self.assertEqual((processor["rss"], processor["peak_rss"]), (4, 9))
+
+    def test_a_restarted_processor_starts_its_peak_over(self) -> None:
+        """A restarted processor has a new pid, and the peak of the one it replaced says nothing about it."""
+        app = make_app()
+        for index in range(2):
+            dispatch(app, index)
+        report(app, running=[0], rss_bytes=9_000_000)
+        report(app, running=[1], rss_bytes=2_000_000)
+
+        self.assertEqual(worker_card(app)["processors"][0]["peak_rss"], 2)
 
     def test_a_finished_task_leaves_the_queue(self) -> None:
         app = make_app()

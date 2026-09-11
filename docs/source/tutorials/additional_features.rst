@@ -84,7 +84,7 @@ What the Web GUI shows:
 * **Task Log**: one row per state change in the order it happened, so a task that is rebalanced or retried leaves its whole trail. Click a row to see one task's trail alone.
 * **Worker Task Stream**: a timeline by worker with capability colors and status overlays (failed and canceled patterns).
 * **Memory Usage**: rolling cluster memory chart sampled from what the fleet is holding.
-* **Workers**: one card per worker, grouped by manager: the task each processor is running and for how long, and the queue waiting behind them.
+* **Workers**: one row per worker under a row for its manager, which sums the same columns: the worker's memory against its limit and its CPU, the task each processor holds and for how long, and the queue waiting behind it in the order it runs. Click a queued task for its trail.
 * **Machines**: one row per host, with its workers, CPU, memory and host-wide network counters.
 * **Clients**: one row per connected client, with its host, tasks in flight, finished and failed counts, CPU, memory and latency. Finished counts every task that reached a terminal state, cancelled ones included.
 * **Objects**: the biggest objects the scheduler tracks, with their size, the client that created them, and the tasks holding them, a page at a time.

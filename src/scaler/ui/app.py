@@ -80,8 +80,8 @@ TASK_LOG_PAGE_SIZE = 50
 TASK_EVENTS_PAGE_SIZE = 50
 OBJECTS_PAGE_SIZE = 50
 
-# Queued task IDs one worker's card names; a worker's queue runs to thousands, so the rest are counted.
-WORKER_QUEUE_SAMPLE = 20
+# About two lines of a worker's queue. A queue runs to thousands, so the rest is counted, not named.
+WORKER_QUEUE_SAMPLE = 12
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1229,7 +1229,11 @@ class WebUIApp:
                 "capabilities": _display_capabilities(set(self._worker_capabilities.get(worker_name, {}).keys())),
             }
 
-            # update processor details
+            # the highest this monitor has seen each processor at, carried by pid so a restarted one starts over
+            peaks = {
+                processor["pid"]: processor["peak_rss"]
+                for processor in self._worker_processors.get(worker_name, {}).get("processors", [])
+            }
             self._worker_processors[worker_name] = {
                 "name": _format_worker_name(worker_name),
                 "full_name": worker_name,
@@ -1237,12 +1241,9 @@ class WebUIApp:
                 "rss_free": rss_free,
                 "processors": [],
             }
-            max_rss = 0
             running_tasks: List[Tuple[bytes, int]] = []
             for ps in sorted(worker_data.processorStatuses, key=lambda x: x.pid):
                 rss_val = int(ps.resource.rss / 1e6)
-                if ps.resource.rss > max_rss:
-                    max_rss = ps.resource.rss
                 if ps.hasTask:
                     running_tasks.append((bytes(ps.currentTaskId), ps.taskAgeSeconds))
                 task_id = bytes(ps.currentTaskId).hex() if ps.hasTask else ""
@@ -1251,8 +1252,7 @@ class WebUIApp:
                         "pid": ps.pid,
                         "cpu": round(ps.resource.cpu / 10, 1),
                         "rss": rss_val,
-                        "max_rss": int(max_rss / 1e6),
-                        "rss_max_gauge": rss_val + rss_free,
+                        "peak_rss": max(rss_val, peaks.get(ps.pid, 0)),
                         "initialized": bool(ps.initialized),
                         "has_task": bool(ps.hasTask),
                         "suspended": bool(ps.suspended),
@@ -1819,9 +1819,9 @@ class WebUIApp:
             total_queued = 0
             for wp in workers:
                 total_queued += wp["queue_depth"]
+                total_rss += wp["rss"]
+                total_cpu += wp["cpu"]
                 for proc in wp["processors"]:
-                    total_rss += proc["rss"]
-                    total_cpu += proc["cpu"]
                     total_processors += 1
                     if proc["has_task"]:
                         active_processors += 1
@@ -1840,16 +1840,18 @@ class WebUIApp:
         return result
 
     def __worker_task_lists(self, worker_name: str, processors: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """What one worker is running, what is waiting behind it, and the numbers its card carries.
+        """What one worker is running, what is waiting behind it, and the numbers its row carries.
 
         A processor names the task it is on, so everything else the worker holds is queued there.
+        The processor at work leads, then the suspended ones holding a task, then any that are idle.
         """
         running = {proc["task_id"] for proc in processors if proc["task_id"]}
         queued = [task_id for task_id in self._worker_tasks.get(worker_name, {}) if task_id not in running]
+        in_order = sorted(processors, key=lambda proc: (proc.get("suspended", False), not proc["task_id"]))
 
         worker = self._workers_data.get(worker_name, {})
         return {
-            "processors": [dict(proc, function=self.__function_of(proc["task_id"])) for proc in processors],
+            "processors": [dict(proc, function=self.__function_of(proc["task_id"])) for proc in in_order],
             "queue": [self.__queued_task(task_id) for task_id in queued[:WORKER_QUEUE_SAMPLE]],
             "queue_named": len(queued),
             # what the worker itself reports queued, which counts tasks this monitor never saw arrive
@@ -1867,7 +1869,7 @@ class WebUIApp:
         }
 
     def __queued_task(self, task_id: str) -> Dict[str, str]:
-        """A queued task as its worker's card shows it. The whole id travels: the card links to its trail."""
+        """A queued task as its worker's row shows it. The whole id travels, because the row links to its trail."""
         return {"task_id": task_id, "function": self.__function_of(task_id)}
 
     def __function_of(self, task_id: str) -> str:

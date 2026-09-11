@@ -238,9 +238,22 @@
 
     <!-- Tab: Workers -->
     <div class="tab-panel" id="panel-workers">
-        <div class="pager pager-top" id="workerdetails-pager-top"></div>
-        <div id="workerdetails-container"></div>
-        <div class="pager" id="workerdetails-pager"></div>
+        <div class="card">
+            <h3 title="What each worker is running and what is queued behind it, under the manager that started it">Workers <span class="muted" id="workerdetails-total"></span></h3>
+            <div class="pager pager-top" id="workerdetails-pager-top"></div>
+            <div class="table-wrap">
+                <div class="worker-grid">
+                    <div class="worker-row worker-grid-head">
+                        <div>Worker</div>
+                        <div title="The agent and its processors together">Resources</div>
+                        <div title="The task each processor holds and for how long, then the process itself">Running</div>
+                        <div title="Tasks the worker holds and has not started, next in line first">Queue</div>
+                    </div>
+                    <div id="workerdetails-container"></div>
+                </div>
+            </div>
+            <div class="pager" id="workerdetails-pager"></div>
+        </div>
     </div>
 
 

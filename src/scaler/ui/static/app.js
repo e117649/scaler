@@ -66,6 +66,7 @@ var streamLegend = $("stream-legend");
 var memoryCanvas = $("memory-canvas");
 var memoryCtx = memoryCanvas.getContext("2d");
 var workerDetailsContainer = $("workerdetails-container");
+var workerDetailsCount = $("workerdetails-total");
 var machinesBody = $("machines-body");
 var ossObjects = $("oss-objects");
 var ossUnique = $("oss-unique");
@@ -1355,8 +1356,12 @@ memoryCanvas.addEventListener("mouseleave", function() {
 });
 
 // -- Workers --
-var workerCollapsed = {};   // track collapsed state by worker name
-var managerCollapsed = {};  // track collapsed state by manager id
+var managerCollapsed = {};  // manager id -> folded by this browser
+// A rebuild between a press and its release swallows the click, so the rows hold still briefly after a press.
+var CLICK_HOLD_MS = 600;
+var workersPressedAt = 0;
+
+workerDetailsContainer.addEventListener("pointerdown", function() { workersPressedAt = Date.now(); });
 
 function updateWorkerDetails(workerDetails) {
     lastWorkerDetails = workerDetails;
@@ -1364,23 +1369,18 @@ function updateWorkerDetails(workerDetails) {
 }
 
 function renderWorkerDetails() {
-    // Each group carries fleet-wide summary numbers, but only this page's worker detail.
+    if (Date.now() - workersPressedAt < CLICK_HOLD_MS) return;  // the next update draws it
+
+    // Each group carries fleet-wide summary numbers, but only this page's workers.
     var groups = lastWorkerDetails || [];
-
     workerDetailsContainer.innerHTML = "";
+    workerDetailsCount.textContent = workerDetailsTotal ? "(" + workerDetailsTotal + ")" : "";
     if (workerDetailsTotal === 0) {
-        workerDetailsContainer.innerHTML = '<div class="card"><p style="color:#64748b">No workers connected</p></div>';
-        renderPagers("workerdetails-pager", 0, 1, 0, function() {});
-        return;
+        workerDetailsContainer.appendChild(makeElement("div", "worker-empty worker-detail", "No workers connected"));
     }
-
     for (var g = 0; g < groups.length; g++) {
-        var group = groups[g];
-        if (!group.workers || group.workers.length === 0) continue;
-        var section = buildManagerSection(group);
-        workerDetailsContainer.appendChild(section);
-        for (var i = 0; i < group.workers.length; i++) {
-            section.appendChild(buildWorkerCard(group.workers[i]));
+        if (groups[g].workers && groups[g].workers.length > 0) {
+            workerDetailsContainer.appendChild(buildWorkerGroup(groups[g]));
         }
     }
     renderPagers("workerdetails-pager", workerDetailsPage, workerDetailsPages, workerDetailsTotal, function(p) {
@@ -1389,206 +1389,130 @@ function renderWorkerDetails() {
     });
 }
 
-function buildManagerSection(group) {
-    var managerSection = document.createElement("details");
-    managerSection.className = "manager-group card";
-    managerSection.open = !managerCollapsed[group.manager_id];
+// A manager's workers under a row that sums the same four columns over every worker the manager has.
+function buildWorkerGroup(group) {
+    var details = makeElement("details", "worker-group");
+    details.open = !managerCollapsed[group.manager_id];
+    details.addEventListener("toggle", function() { managerCollapsed[group.manager_id] = !details.open; });
 
-    var managerSummary = document.createElement("summary");
-    managerSummary.className = "manager-header";
-    managerSummary.innerHTML =
-        '<span class="manager-title">Manager: ' + escapeHTML(group.manager_id) + '</span>' +
-        '<span class="manager-stats">' +
-            '<span class="manager-stat"><b>Workers:</b> ' + group.worker_count + '</span>' +
-            '<span class="manager-stat" title="Processors with a task, of every processor this manager\'s ' +
-                'workers run"><b>Busy:</b> ' + group.active_processors + ' / ' + group.total_processors + '</span>' +
-            '<span class="manager-stat" title="Tasks waiting in those workers\' own queues">' +
-                '<b>Queued:</b> ' + group.total_queued + '</span>' +
-            '<span class="manager-stat"><b>Total PSS:</b> ' + group.total_rss + ' MB</span>' +
-            '<span class="manager-stat"><b>Total CPU:</b> ' + group.total_cpu + '%</span>' +
-        '</span>';
-    managerSection.appendChild(managerSummary);
-    (function(mid, el) {
-        el.addEventListener("toggle", function() { managerCollapsed[mid] = !el.open; });
-    })(group.manager_id, managerSection);
-    return managerSection;
-}
+    var name = group.manager_id === "\u2014" ? "No manager" : group.manager_id;
+    var count = group.worker_count + (group.worker_count === 1 ? " worker" : " workers");
+    var manager = makeElement("div");
+    manager.appendChild(makeElement("span", "worker-group-name", name));
+    manager.appendChild(document.createTextNode(" " + count));
 
-// One card per worker: what its processors are running, and what is queued behind them.
-function buildWorkerCard(worker) {
-    var details = document.createElement("details");
-    details.className = "card worker-card";
-    details.open = !workerCollapsed[worker.name];
+    var busy = group.active_processors + " of " + group.total_processors + " processors busy";
+    var summary = makeElement("summary", "worker-row worker-group-head");
+    summary.appendChild(manager);
+    summary.appendChild(makeElement("div", "", group.total_rss + " MB \u00b7 " + group.total_cpu + "% CPU"));
+    summary.appendChild(makeElement("div", "", busy, "Processors holding a task, of every one these workers run"));
+    summary.appendChild(makeElement("div", "", group.total_queued + " queued", "As the workers themselves report it"));
+    details.appendChild(summary);
 
-    details.appendChild(buildWorkerCardSummary(worker));
-    (function(name, el) {
-        el.addEventListener("toggle", function() { workerCollapsed[name] = !el.open; });
-    })(worker.name, details);
-
-    var body = document.createElement("div");
-    body.className = "worker-card-body";
-    body.appendChild(buildProcessorTable(worker));
-    body.appendChild(buildQueuePanel(worker));
-    details.appendChild(body);
+    for (var i = 0; i < group.workers.length; i++) details.appendChild(buildWorkerRow(group.workers[i]));
     return details;
 }
 
-function buildWorkerCardSummary(worker) {
-    var summary = document.createElement("summary");
-    summary.className = "worker-card-header";
-
-    var name = document.createElement("span");
-    name.className = "worker-card-name";
-    name.textContent = worker.name;
-    name.title = worker.full_name || worker.name;
-    summary.appendChild(name);
-
-    var running = document.createElement("span");
-    running.className = "pill pill-running";
-    running.textContent = worker.running + " running";
-    running.title = "Tasks on a processor right now";
-    summary.appendChild(running);
-
-    var queued = document.createElement("span");
-    queued.className = "pill" + (worker.queue_depth > 0 ? " pill-queued" : "");
-    queued.textContent = worker.queue_depth + " queued";
-    queued.title = "Tasks the worker holds and has not started, as the worker itself reports them";
-    summary.appendChild(queued);
-
-    var stats = document.createElement("span");
-    stats.className = "worker-card-stats";
-    stats.appendChild(makeStat("Host", worker.host, ""));
-    stats.appendChild(makeStat("CPU", worker.cpu + "%", "Agent and processors together"));
-    stats.appendChild(makeStat("PSS", worker.rss + " MB", "Agent and processors together"));
-    stats.appendChild(makeStat("Mem", worker.mem_used_pct + "%",
-        worker.mem_limit ? "Of the " + worker.mem_limit + " MB limit this worker runs under" : ""));
-    stats.appendChild(makeStat("Free", worker.free, "Queue slots left on this worker"));
-    stats.appendChild(makeStat("Sent", worker.sent, "Tasks sent here and not yet answered"));
-    stats.appendChild(makeStat("Last seen", worker.last_seen, "Since this worker's last heartbeat"));
-    summary.appendChild(stats);
-    return summary;
+function buildWorkerRow(worker) {
+    var row = makeElement("div", "worker-row");
+    row.appendChild(buildWorkerIdentity(worker));
+    row.appendChild(buildWorkerResources(worker));
+    row.appendChild(buildWorkerRunning(worker));
+    row.appendChild(buildWorkerQueue(worker));
+    return row;
 }
 
-function makeStat(label, value, title) {
-    var stat = document.createElement("span");
-    stat.className = "worker-card-stat";
-    if (title) stat.title = title;
-    var b = document.createElement("b");
-    b.textContent = label + ":";
-    stat.appendChild(b);
-    stat.appendChild(document.createTextNode(" " + (value === undefined || value === null ? "\u2014" : value)));
-    return stat;
-}
-
-// memory columns are PSS on Linux, RSS on macOS/Windows (see get_process_memory)
-var PROCESSOR_HEADERS = [
-    {label: "PID", title: ""},
-    {label: "Task", title: "Task this processor is running; click it for that task's trail"},
-    {label: "Function", title: ""},
-    {label: "For", title: "How long it has been on that task"},
-    {label: "CPU %", title: ""},
-    {label: "PSS (MB)", title: "PSS on Linux, RSS on macOS and Windows"},
-    {label: "Max PSS (MB)", title: "Highest this processor has reached since it started"},
-    {label: "Initialized", title: "The processor has loaded the client's environment"},
-    {label: "Suspended", title: "Holding a task without running it"}
-];
-
-function buildProcessorTable(worker) {
-    var wrap = document.createElement("div");
-    wrap.className = "worker-processors";
-
-    var table = document.createElement("table");
-    table.className = "data-table";
-    var thead = document.createElement("thead");
-    var headerRow = document.createElement("tr");
-    for (var h = 0; h < PROCESSOR_HEADERS.length; h++) {
-        var th = document.createElement("th");
-        th.textContent = PROCESSOR_HEADERS[h].label;
-        if (PROCESSOR_HEADERS[h].title) th.title = PROCESSOR_HEADERS[h].title;
-        headerRow.appendChild(th);
+function buildWorkerIdentity(worker) {
+    var cell = makeElement("div");
+    cell.appendChild(makeElement("div", "worker-name", worker.name, worker.full_name || worker.name));
+    cell.appendChild(makeElement("div", "worker-detail", worker.host, worker.host));
+    cell.appendChild(makeElement("div", "worker-detail", "seen " + worker.last_seen + " ago", "Its last heartbeat"));
+    if (worker.capabilities && worker.capabilities !== "<no capabilities>") {
+        cell.appendChild(makeElement("div", "worker-detail", worker.capabilities, "Capabilities"));
     }
-    thead.appendChild(headerRow);
-    table.appendChild(thead);
+    return cell;
+}
 
-    var tbody = document.createElement("tbody");
-    for (var p = 0; p < worker.processors.length; p++) {
-        tbody.appendChild(buildProcessorRow(worker.processors[p]));
+function buildWorkerResources(worker) {
+    var limit = worker.mem_limit ? "Of the " + worker.mem_limit + " MB limit this worker runs under" : "";
+    var cell = makeElement("div");
+    cell.appendChild(buildMeter("Mem", worker.mem_used_pct, limit));
+    cell.appendChild(buildMeter("CPU", worker.cpu, "Where one core is 100%"));
+    var pss = makeElement("div", "meter", null, "PSS on Linux, RSS on macOS and Windows");
+    pss.appendChild(makeElement("span", "meter-label", "PSS"));
+    pss.appendChild(makeElement("span", "", worker.rss + " MB"));
+    cell.appendChild(pss);
+    return cell;
+}
+
+// A labelled percentage gauge.
+function buildMeter(label, percent, title) {
+    var meter = makeElement("div", "meter", null, title);
+    meter.appendChild(makeElement("span", "meter-label", label));
+    meter.insertAdjacentHTML("beforeend", makeGaugeHTML(percent, 100, "%"));
+    return meter;
+}
+
+// One entry per processor: the task it holds and for how long, then the process itself.
+function buildWorkerRunning(worker) {
+    var cell = makeElement("div");
+    for (var p = 0; p < worker.processors.length; p++) cell.appendChild(buildProcessor(worker.processors[p]));
+    return cell;
+}
+
+function buildProcessor(proc) {
+    var task = makeElement("div", "processor-task");
+    if (proc.task_id) {
+        if (proc.function) task.appendChild(makeElement("span", "processor-function", proc.function, proc.function));
+        task.appendChild(makeTaskLink(proc.task_id, "span"));
+        task.appendChild(makeElement("span", "worker-detail", proc.task_age, "How long it has held the task"));
+    } else {
+        task.appendChild(makeElement("span", "worker-detail", "idle"));
     }
-    table.appendChild(tbody);
-    wrap.appendChild(table);
-    return wrap;
+    if (proc.suspended) {
+        task.appendChild(makeElement("span", "tag tag-suspended", "suspended", "Holding a task without running it"));
+    }
+    if (!proc.initialized) {
+        task.appendChild(makeElement("span", "tag", "starting", "Has not loaded the client's environment yet"));
+    }
+
+    var memory = proc.rss + " MB, peak " + proc.peak_rss + " MB";
+    var usage = ["pid " + proc.pid, proc.cpu + "% CPU", memory].join(" \u00b7 ");
+    var processor = makeElement("div", "processor");
+    processor.appendChild(task);
+    processor.appendChild(makeElement("div", "worker-detail", usage, "The peak is the highest this monitor has seen"));
+    return processor;
 }
 
-function buildProcessorRow(proc) {
-    var tr = document.createElement("tr");
-    var tdPid = document.createElement("td");
-    tdPid.textContent = proc.pid;
-    tr.appendChild(tdPid);
-    tr.appendChild(proc.task_id ? makeTaskLink(proc.task_id) : makeCell("\u2014"));
-    tr.appendChild(makeCell(proc.function || "\u2014"));
-    tr.appendChild(makeCell(proc.task_age));
-    var tdCpu = document.createElement("td");
-    tdCpu.innerHTML = makeGaugeHTML(proc.cpu, 100, "%");
-    tr.appendChild(tdCpu);
-    var tdRss = document.createElement("td");
-    tdRss.innerHTML = makeGaugeHTML(proc.rss, proc.rss_max_gauge, "");
-    tr.appendChild(tdRss);
-    var tdMax = document.createElement("td");
-    tdMax.innerHTML = makeGaugeHTML(proc.max_rss, proc.rss_max_gauge, "");
-    tr.appendChild(tdMax);
-    var tdInit = document.createElement("td");
-    tdInit.innerHTML = boolIndicator(proc.initialized);
-    tr.appendChild(tdInit);
-    var tdSusp = document.createElement("td");
-    tdSusp.innerHTML = boolIndicator(proc.suspended);
-    tr.appendChild(tdSusp);
-    return tr;
-}
+// What this worker holds and has not started, next in line first.
+function buildWorkerQueue(worker) {
+    var depth = Math.max(worker.queue_depth, worker.queue_named);
+    var head = makeElement("div", "queue-head");
+    head.appendChild(makeElement("span", depth > 0 ? "queue-count" : "worker-detail", depth + " queued"));
+    head.appendChild(makeElement("span", "worker-detail", " \u00b7 " + worker.free + " free", "Queue slots left"));
+    head.appendChild(makeElement("span", "worker-detail", " \u00b7 " + worker.sent + " sent", "Not yet answered"));
 
-// Given to this worker but not started: the worker counts them, the ids are the ones the monitor saw.
-function buildQueuePanel(worker) {
-    var panel = document.createElement("div");
-    panel.className = "worker-queue";
-
-    var heading = document.createElement("h4");
-    heading.textContent = "Queue";
-    var count = document.createElement("span");
-    count.className = "muted";
-    count.textContent = " " + worker.queue_named + " of " + Math.max(worker.queue_depth, worker.queue_named);
-    count.title = "Task IDs this monitor can name, of the queue the worker reports";
-    heading.appendChild(count);
-    panel.appendChild(heading);
-
+    var cell = makeElement("div");
+    cell.appendChild(head);
     if (worker.queue.length === 0) {
-        var empty = document.createElement("p");
-        empty.className = "muted";
-        empty.textContent = worker.queue_depth > 0 ? "Queued before this monitor started" : "Nothing queued";
-        panel.appendChild(empty);
-        return panel;
+        if (depth > 0) cell.appendChild(makeElement("div", "worker-detail", "queued before this monitor started"));
+        return cell;
     }
 
-    var list = document.createElement("ul");
-    list.className = "queue-list";
-    for (var i = 0; i < worker.queue.length; i++) {
-        var item = document.createElement("li");
-        item.appendChild(makeTaskLink(worker.queue[i].task_id, "span"));
-        if (worker.queue[i].function) {
-            var fn = document.createElement("span");
-            fn.className = "queue-function";
-            fn.textContent = worker.queue[i].function;
-            item.appendChild(fn);
-        }
-        list.appendChild(item);
+    var chips = makeElement("div", "queue-chips");
+    for (var i = 0; i < worker.queue.length; i++) chips.appendChild(buildQueueChip(worker.queue[i]));
+    if (depth > worker.queue.length) {
+        chips.appendChild(makeElement("span", "chip chip-more", "+" + (depth - worker.queue.length), "Further back"));
     }
-    panel.appendChild(list);
+    cell.appendChild(chips);
+    return cell;
+}
 
-    if (worker.queue_named > worker.queue.length) {
-        var more = document.createElement("p");
-        more.className = "muted";
-        more.textContent = "+ " + (worker.queue_named - worker.queue.length) + " more";
-        panel.appendChild(more);
-    }
-    return panel;
+function buildQueueChip(task) {
+    var label = task.function || task.task_id.slice(0, 12);
+    var chip = makeElement("span", "chip task-link", label, task.task_id + " - click for this task's trail");
+    chip.addEventListener("click", function() { focusTask(task.task_id); });
+    return chip;
 }
 
 // A task id that opens that task's trail in the Task Log.
@@ -1613,8 +1537,13 @@ function focusTask(taskId) {
     showOnlyTask(taskId);
 }
 
-function boolIndicator(val) {
-    return '<span class="bool-indicator ' + (val ? "bool-true" : "bool-false") + '"></span>';
+// An element with the class, text and tooltip most cells set.
+function makeElement(tag, className, text, title) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = text;
+    if (title) node.title = title;
+    return node;
 }
 
 // -- Utilities --
