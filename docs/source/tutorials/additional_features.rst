@@ -99,6 +99,7 @@ A waiting count that does not fall is a fetch nobody can answer, because a clien
 
 Interactive behavior:
 
-* Pushes updates over a server-sent event stream, which the browser reconnects on its own.
+* Pushes updates over a server-sent event stream, which the page reconnects when it drops.
 * Sends a full current snapshot on connect, then incremental updates in short batches.
 * Supports runtime settings for stream window length (5/10/30 minutes) and memory chart scale (linear/log).
+* Keeps each browser tab's view, meaning its tab, settings, sorting, pages and task filter, across a reload or a dropped stream.

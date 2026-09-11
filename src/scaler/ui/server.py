@@ -8,13 +8,14 @@ import json
 import logging
 import mimetypes
 import ssl
+import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from scaler.config.common.security import SecurityConfig
-from scaler.ui.app import STATIC_DIR, WebUIApp
+from scaler.ui.app import STATIC_DIR, BrowserView, WebUIApp
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +102,24 @@ class WebGUIRequestHandler(BaseHTTPRequestHandler):
             return None
         return request
 
+    def __opening_view(self) -> BrowserView:
+        """The view a stream opens on, which the browser sends so a reload or a dropped stream shows what it did.
+
+        A saved view the server can no longer apply opens on the default view rather than failing the stream.
+        """
+        view = BrowserView()
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        try:
+            state = json.loads(query.get("state", ["{}"])[0])
+            view.apply_view(state.get("view", {}))
+            view.apply_settings(state.get("settings", {}))
+        except (AttributeError, TypeError, ValueError):
+            return BrowserView()
+        return view
+
     def __stream_events(self) -> None:
         """Hold one browser's event stream open, writing each payload the batcher queues for it."""
-        stream = self.app.add_browser()
+        stream = self.app.add_browser(self.__opening_view())
         try:
             # The stream has no length and never ends on its own, so the connection is what delimits it.
             self.close_connection = True

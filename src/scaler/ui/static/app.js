@@ -2,7 +2,6 @@
 "use strict";
 
 // -- State --
-var events = null;
 var browserId = null;   // this browser's id on the server, given with its first full state
 var lastWorkersData = [];    // this browser's page of worker rows, already sorted by the server
 var workersTotal = 0;        // full fleet size, of which this browser holds one page
@@ -41,6 +40,10 @@ var lastManagersData = [];
 var lastWorkerDetails = [];
 var streamLegendData = [];       // cached stream legend + manager legend for re-render on switch
 var streamManagerLegendData = [];
+// What this tab shows, kept across a reload and sent with every new stream so it opens on the same view.
+var STATE_STORAGE_KEY = "scaler-web-gui";
+var RECONNECT_DELAY_MS = 2000;
+var saved = loadSavedState();
 
 // -- DOM refs --
 var $ = function(id) { return document.getElementById(id); };
@@ -107,6 +110,8 @@ function selectTab(name) {
         panels[j].classList.remove("active");
     }
     activeTab = name;
+    saved.tab = name;
+    saveState();
     var panel = $("panel-" + name);
     if (panel) panel.classList.add("active");
     updateFitPageStream();
@@ -219,12 +224,32 @@ setupToggle("scale-toggle", function(val) {
 });
 
 function sendSettings(settings) {
+    Object.assign(saved.settings, settings);
+    saveState();
     postView({ settings: settings });
 }
 
 // Tell the server what this browser is looking at. It answers with just that view.
 function sendView(view) {
+    Object.assign(saved.view, view);
+    saveState();
     postView({ view: view });
+}
+
+function loadSavedState() {
+    var state = null;
+    try {
+        state = JSON.parse(sessionStorage.getItem(STATE_STORAGE_KEY));
+    } catch (e) {}
+    if (!state || typeof state !== "object") state = {};
+    return { tab: state.tab || "live", view: state.view || {}, settings: state.settings || {} };
+}
+
+// Without storage the view lasts as long as the page does.
+function saveState() {
+    try {
+        sessionStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(saved));
+    } catch (e) {}
 }
 
 // The stream is one-way, so a view change is a request of its own; browserId says whose view to move.
@@ -243,21 +268,24 @@ function postView(body) {
 }
 
 // -- Server-sent events --
-// EventSource reconnects on its own and a new stream opens with a full state, so no backoff here.
+// A new stream opens on the view this tab saved, so a reload or a dropped stream comes back to what it showed.
+// EventSource would retry the URL it was built with, which holds the view of that moment, so this reconnects itself.
 function connect() {
-    events = new EventSource("/events");
+    var source = new EventSource("/events?state=" + encodeURIComponent(JSON.stringify(saved)));
 
-    events.onopen = function() {
+    source.onopen = function() {
         connStatus.textContent = "Connected";
         connStatus.classList.add("connected");
     };
 
-    events.onerror = function() {
+    source.onerror = function() {
         connStatus.textContent = "Disconnected";
         connStatus.classList.remove("connected");
+        source.close();
+        setTimeout(connect, RECONNECT_DELAY_MS);
     };
 
-    events.onmessage = function(evt) {
+    source.onmessage = function(evt) {
         var data;
         try {
             data = JSON.parse(evt.data);
@@ -620,50 +648,40 @@ function updateWorkersCountBadge() {
 }
 
 // Sorting runs on the server, so a click just sets the indicator and asks for page 0 of the new order.
-// `fields` names the column each header sorts by, in the order the header row has them.
-function setupSort(tableId, fields, onSort) {
-    var table = $(tableId);
-    if (!table) return;
-    var headerRow = table.querySelector("thead tr");
+// `table` prefixes the view fields, and `fields` names the column each header sorts by, in header order.
+function setupSort(table, tableId, fields) {
+    var tableElement = $(tableId);
+    if (!tableElement) return;
+    var headerRow = tableElement.querySelector("thead tr");
     if (!headerRow) return;
 
     var ths = headerRow.children;
-    var sortField = null;
-    var ascending = true;
+    var sortField = saved.view[table + "_sort"] || null;
+    var ascending = saved.view[table + "_sort_ascending"] !== false;
     for (var i = 0; i < ths.length && i < fields.length; i++) {
         ths[i].classList.add("sortable");
         ths[i].setAttribute("data-sort-field", fields[i]);
+        if (fields[i] === sortField) ths[i].classList.add(ascending ? "sort-asc" : "sort-desc");
         (function(th, field) {
             th.addEventListener("click", function() {
                 ascending = sortField === field ? !ascending : true;
                 sortField = field;
                 for (var k = 0; k < ths.length; k++) ths[k].classList.remove("sort-asc", "sort-desc");
                 th.classList.add(ascending ? "sort-asc" : "sort-desc");
-                onSort(field, ascending);
+                var change = {};
+                change[table + "_sort"] = field;
+                change[table + "_sort_ascending"] = ascending;
+                change[table + "_page"] = 0;
+                sendView(change);
             });
         })(ths[i], fields[i]);
     }
 }
 
-setupSort("workers-table", WORKER_FIELDS, function(field, ascending) {
-    workersPage = 0;  // jump to the top of the new sort order
-    sendView({ workers_sort: field, workers_sort_ascending: ascending, workers_page: 0 });
-});
-
-setupSort("tasklog-table", TASK_LOG_FIELDS, function(field, ascending) {
-    taskLogPage = 0;
-    sendView({ task_log_sort: field, task_log_sort_ascending: ascending, task_log_page: 0 });
-});
-
-setupSort("taskevents-table", TASK_EVENT_FIELDS, function(field, ascending) {
-    taskEventsPage = 0;
-    sendView({ task_events_sort: field, task_events_sort_ascending: ascending, task_events_page: 0 });
-});
-
-setupSort("objects-table", OBJECT_FIELDS, function(field, ascending) {
-    objectsPage = 0;
-    sendView({ objects_sort: field, objects_sort_ascending: ascending, objects_page: 0 });
-});
+setupSort("workers", "workers-table", WORKER_FIELDS);
+setupSort("task_log", "tasklog-table", TASK_LOG_FIELDS);
+setupSort("task_events", "taskevents-table", TASK_EVENT_FIELDS);
+setupSort("objects", "objects-table", OBJECT_FIELDS);
 
 // Columns drawn as a bar: a number is the fixed maximum, a string names the row field to divide by.
 var WORKER_GAUGE_FIELDS = {
@@ -1643,5 +1661,7 @@ window.addEventListener("resize", function() {
 });
 
 // -- Start --
+applySettings(saved.settings);
+selectTab($("panel-" + saved.tab) ? saved.tab : "live");
 connect();
 requestAnimationFrame(renderLoop);

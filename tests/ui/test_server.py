@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict
 
@@ -64,6 +65,26 @@ class TestWebGUIServer(unittest.TestCase):
             self.assertEqual(answer["settings"]["stream_window"], 30)
             self.assertEqual(self.app.get_browser(browser_id).view.stream_window_minutes, 30)
 
+    def test_a_stream_opens_on_the_view_the_browser_saved(self) -> None:
+        """A reload or a dropped stream reopens on what the browser was showing, not on the default view."""
+        state = json.dumps({"view": {"task_events_task": "abc"}, "settings": {"stream_window": 30}})
+        with urllib.request.urlopen(self.__events_url(state), timeout=10) as stream:
+            first = self.__next_event(stream)
+
+        self.assertEqual(first["settings"]["stream_window"], 30)
+        self.assertEqual(first["task_stream"]["window"], 30 * 60)
+        self.assertEqual(first["task_events_task"], "abc")
+
+    def test_a_saved_view_that_cannot_be_applied_opens_on_the_default_view(self) -> None:
+        malformed_page = json.dumps({"view": {"workers_page": "x"}, "settings": {"stream_window": 30}})
+        for state in ("not json", json.dumps([30]), malformed_page):
+            with self.subTest(state=state):
+                with urllib.request.urlopen(self.__events_url(state), timeout=10) as stream:
+                    first = self.__next_event(stream)
+
+                self.assertEqual(first["type"], "full_state")
+                self.assertEqual(first["settings"]["stream_window"], 5)
+
     def test_a_browser_that_falls_too_far_behind_is_dropped(self) -> None:
         """A browser that stops reading must lose its stream, so it reconnects to a fresh full state."""
         with urllib.request.urlopen(f"{self.base}/events", timeout=10) as stream:
@@ -100,6 +121,9 @@ class TestWebGUIServer(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as raised:
             self.__post_view({"browser_id": 4321, "view": {"workers_page": 1}})
         self.assertEqual(raised.exception.code, 410)
+
+    def __events_url(self, state: str) -> str:
+        return f"{self.base}/events?{urllib.parse.urlencode({'state': state})}"
 
     def __raw_get(self, path: str) -> bytes:
         with socket.create_connection(("127.0.0.1", self.port), timeout=10) as connection:

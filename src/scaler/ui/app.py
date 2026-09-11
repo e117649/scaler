@@ -217,9 +217,9 @@ class BrowserStream:
     The next tick corrects it.
     """
 
-    def __init__(self, browser_id: int) -> None:
+    def __init__(self, browser_id: int, view: BrowserView) -> None:
         self.browser_id = browser_id
-        self.view = BrowserView()
+        self.view = view
         self._payloads: queue.Queue[str] = queue.Queue(maxsize=BROWSER_QUEUE_MAX_PAYLOADS)
         self._closed = threading.Event()
 
@@ -1938,9 +1938,9 @@ class WebUIApp:
             "settings": view.settings(),
         }
 
-    def add_browser(self) -> "BrowserStream":
-        """Register a browser's event stream. Its id is what its later view requests name."""
-        stream = BrowserStream(browser_id=next(self._browser_ids))
+    def add_browser(self, view: BrowserView) -> "BrowserStream":
+        """Register a browser's event stream, opening on `view`. Its id is what its later view requests name."""
+        stream = BrowserStream(browser_id=next(self._browser_ids), view=view)
         with self._browsers_lock:
             self._browsers[stream.browser_id] = stream
         return stream
