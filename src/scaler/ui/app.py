@@ -986,10 +986,8 @@ class WebUIApp:
         self._task_events: Deque[Dict[str, Any]] = deque(maxlen=self._task_log_max_size)
         self._task_event_seq: int = 0
         self._task_id_to_function: Dict[str, str] = {}
-        # Tasks each worker has been given and not yet answered, and the reverse lookup that keeps the two
-        # in step. The scheduler reports a task running once it dispatches it, so a task is in here from
-        # the moment it reaches a worker: the worker's processors say which of them are on a core.
-        self._worker_tasks: Dict[str, Set[str]] = {}
+        # Tasks each worker holds; a dict, not a set, because a worker works through them in arrival order.
+        self._worker_tasks: Dict[str, Dict[str, None]] = {}
         self._task_worker: Dict[str, str] = {}
         self._task_stream = TaskStreamState()
         self._memory_chart = MemoryChartState()
@@ -1536,12 +1534,12 @@ class WebUIApp:
         if previous:
             held = self._worker_tasks.get(previous)
             if held is not None:
-                held.discard(task_id)
+                held.pop(task_id, None)
                 if not held:
                     self._worker_tasks.pop(previous, None)
 
         if worker:
-            self._worker_tasks.setdefault(worker, set()).add(task_id)
+            self._worker_tasks.setdefault(worker, {})[task_id] = None
             self._task_worker[task_id] = worker
         else:
             self._task_worker.pop(task_id, None)
@@ -1855,9 +1853,7 @@ class WebUIApp:
         A processor names the task it is on, so everything else the worker holds is queued there.
         """
         running = {proc["task_id"] for proc in processors if proc["task_id"]}
-        queued = [task_id for task_id in self._worker_tasks.get(worker_name, set()) if task_id not in running]
-        # the order the scheduler sent them, which is the order the worker works through them
-        queued.sort(key=lambda task_id: self._task_log_by_id.get(task_id, {}).get("time", 0.0))
+        queued = [task_id for task_id in self._worker_tasks.get(worker_name, {}) if task_id not in running]
 
         worker = self._workers_data.get(worker_name, {})
         return {
@@ -1887,7 +1883,7 @@ class WebUIApp:
 
     def __release_worker_tasks(self, worker_name: str) -> None:
         """Forget what a departed worker held; the scheduler places those tasks again elsewhere."""
-        for task_id in self._worker_tasks.pop(worker_name, set()):
+        for task_id in self._worker_tasks.pop(worker_name, {}):
             self._task_worker.pop(task_id, None)
 
     def __scheduler_liveness(self) -> Dict[str, Any]:

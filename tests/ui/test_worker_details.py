@@ -143,6 +143,18 @@ class TestWorkerQueue(unittest.TestCase):
         self.assertEqual([entry["task_id"] for entry in worker_card(app)["queue"]], [task_id(0).hex()])
         self.assertNotIn("Worker|two", app._worker_tasks)
 
+    def test_a_rebalanced_task_joins_the_back_of_its_new_queue(self) -> None:
+        """A worker works through its queue in the order it received it, not in submission order."""
+        app = make_app()
+        dispatch(app, 0, worker=b"Worker|two")
+        for index in (1, 2):
+            dispatch(app, index)
+        dispatch(app, 0, worker=WORKER)
+        report(app, running=[], queued=3)
+
+        queue = [entry["task_id"] for entry in worker_card(app)["queue"]]
+        self.assertEqual(queue, [task_id(index).hex() for index in (1, 2, 0)])
+
     def test_a_long_queue_is_sampled_and_counted(self) -> None:
         app = make_app()
         for index in range(WORKER_QUEUE_SAMPLE + 10):
