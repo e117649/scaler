@@ -4,6 +4,7 @@ import hashlib
 import itertools
 import json
 import logging
+import math
 import queue
 import re
 import struct
@@ -65,8 +66,14 @@ TASK_ID_DISPLAY_LENGTH = 12
 # The memory chart's axis floor, so an idle cluster is a flat line rather than noise filling the plot.
 MEMORY_CHART_MINIMUM_BYTES = 1024**3
 
-# Ticks on the memory chart's y axis, the last of them at the axis maximum.
+# Ticks on each of the chart's y axes, memory on the left and CPU on the right, the last at the axis maximum.
 MEMORY_CHART_TICKS = 5
+
+# The CPU axis floor, so the few percent an idle fleet's agents use do not fill the plot.
+CPU_CHART_MINIMUM_PERCENT = 10.0
+
+# Multiples of a power of ten a CPU tick step may be, so every tick reads as a round percentage.
+CPU_CHART_STEP_MULTIPLES = (1, 2, 2.5, 5, 10)
 
 # Payloads a browser may fall behind by before its stream is dropped and it reconnects for a full state.
 BROWSER_QUEUE_MAX_PAYLOADS = 100
@@ -855,8 +862,21 @@ class TaskStreamState:
         }
 
 
+def _cpu_axis_ticks(peak_percent: float) -> List[float]:
+    """Evenly spaced round percentages from 0 up to the smallest axis maximum that holds `peak_percent`.
+
+    CPU is summed across processes, so a fleet computing on 64 cores peaks near 6400%.
+    """
+    intervals = MEMORY_CHART_TICKS - 1
+    peak = max(peak_percent, CPU_CHART_MINIMUM_PERCENT)
+    magnitude = 10 ** math.floor(math.log10(peak / intervals))
+    steps = (multiple * magnitude for multiple in CPU_CHART_STEP_MULTIPLES)
+    step = next(candidate for candidate in steps if candidate * intervals >= peak)
+    return [step * index for index in range(MEMORY_CHART_TICKS)]
+
+
 class MemoryChartState:
-    """Server-side state for the memory usage chart."""
+    """Server-side state for the chart of what the fleet holds and how hard it computes."""
 
     def __init__(self) -> None:
         self._start_time = datetime.datetime.now()
@@ -941,6 +961,7 @@ class MemoryChartState:
         max_mem = max(max((point["y"] for point in chart_points), default=0), MEMORY_CHART_MINIMUM_BYTES)
         ticks = [int(max_mem * step / (MEMORY_CHART_TICKS - 1)) for step in range(MEMORY_CHART_TICKS)]
         y_ticks = [{"val": tick, "label": format_bytes(tick)} for tick in ticks]
+        cpu_ticks = _cpu_axis_ticks(max((point["y"] for point in live_cpu), default=0.0))
 
         return {
             "points": chart_points,
@@ -948,6 +969,8 @@ class MemoryChartState:
             "scale": scale,
             "window": window_seconds,
             "cpu_points": live_cpu,
+            # the CPU axis stays linear whatever the memory scale, from 0 up to its last tick
+            "cpu_ticks": [{"val": tick, "label": f"{tick:g}%"} for tick in cpu_ticks],
         }
 
 

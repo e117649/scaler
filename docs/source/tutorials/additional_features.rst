@@ -83,7 +83,7 @@ What the Web GUI shows:
 * **Task List**: one row per task, with its client, worker, duration, peak memory and capabilities. Click a column header to sort the whole retained list by it.
 * **Task Log**: one row per state change in the order it happened, so a task that is rebalanced or retried leaves its whole trail. Click a row to see one task's trail alone.
 * **Worker Task Stream**: a timeline by worker with capability colors and status overlays (failed and canceled patterns).
-* **Memory Usage**: rolling cluster memory chart sampled from what the fleet is holding.
+* **Memory and CPU**: rolling chart of what the fleet holds, read on the left axis, and the CPU it uses, read on a right axis that scales to the busiest moment in the window.
 * **Workers**: one row per worker under a row for its manager, which sums the same columns: the worker's memory against its limit and its CPU, the task each processor holds and for how long, and the queue waiting behind it in the order it runs. Click a queued task for its trail.
 * **Machines**: one row per host, with its workers, CPU, memory and host-wide network counters.
 * **Clients**: one row per connected client, with its host, tasks in flight, finished and failed counts, CPU, memory and latency. Finished counts every task that reached a terminal state, cancelled ones included.
@@ -101,5 +101,5 @@ Interactive behavior:
 
 * Pushes updates over a server-sent event stream, which the page reconnects when it drops.
 * Sends a full current snapshot on connect, then incremental updates in short batches.
-* Supports runtime settings for stream window length (5/10/30 minutes) and memory chart scale (linear/log).
+* Supports runtime settings for stream window length (5/10/30 minutes) and memory axis scale (linear/log).
 * Keeps each browser tab's view, meaning its tab, settings, sorting, pages and task filter, across a reload or a dropped stream.

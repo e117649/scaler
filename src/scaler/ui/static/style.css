@@ -355,6 +355,28 @@ th.sort-desc::after {
     );
 }
 
+/* A legend beside a chart's title, each swatch drawn the way its series is. */
+.chart-legend {
+    padding: 0;
+    margin: 0;
+}
+
+.line-swatch {
+    display: inline-block;
+    width: 18px;
+    height: 10px;
+}
+
+.line-swatch-memory {
+    background: rgba(59, 130, 246, 0.3);
+    border-top: 2px solid #3b82f6;
+}
+
+.line-swatch-cpu {
+    height: 0;
+    border-top: 2px dashed #d97706;
+}
+
 /* Task Stream */
 .stream-container {
     overflow-y: auto;

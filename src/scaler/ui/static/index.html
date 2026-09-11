@@ -224,10 +224,16 @@
         </div>
         <div class="card" id="memory-card">
             <div class="card-header-row">
-                <h3 title="What the fleet holds, sampled once per scheduler report. The dashed line is fleet CPU, summed across cores and scaled to its own maximum.">Memory Usage</h3>
-                <div class="toggle-group" id="scale-toggle" title="Memory usage scale">
-                    <button class="toggle-btn active" data-value="linear">Linear</button>
-                    <button class="toggle-btn" data-value="log">Log</button>
+                <h3 title="What the fleet holds and how hard it computes, sampled once per scheduler report">Memory and CPU</h3>
+                <div class="inline-controls">
+                    <div class="legend chart-legend">
+                        <span class="legend-item" title="PSS on Linux, RSS on macOS and Windows, read on the left axis"><span class="line-swatch line-swatch-memory"></span>Memory</span>
+                        <span class="legend-item" title="Summed across every process, so each busy core adds 100%, read on the right axis"><span class="line-swatch line-swatch-cpu"></span>CPU</span>
+                    </div>
+                    <div class="toggle-group" id="scale-toggle" title="Scale of the memory axis. The CPU axis stays linear.">
+                        <button class="toggle-btn active" data-value="linear">Linear</button>
+                        <button class="toggle-btn" data-value="log">Log</button>
+                    </div>
                 </div>
             </div>
             <div class="memory-container">

@@ -486,6 +486,7 @@ var TASK_LOG_FIELDS = ["task_id", "function", "client", "worker", "time", "durat
                        "status", "capabilities"];
 
 var lastCpuPoints = [];
+var lastCpuTicks = [];  // the right axis, from 0 up to its last tick
 
 function updateTaskEvents(rows) {
     lastTaskEvents = rows;
@@ -1179,13 +1180,16 @@ streamCanvas.addEventListener("mouseleave", function() {
     tooltip.classList.remove("visible");
 });
 
-// -- Memory Chart (Canvas) --
+// -- Memory and CPU Chart (Canvas) --
 var MEM_LABEL_WIDTH = 80;
-var MEM_PADDING = { top: 20, right: 20, bottom: 30, left: MEM_LABEL_WIDTH };
+var CPU_LABEL_WIDTH = 60;
+var CPU_COLOR = "#d97706";
+var MEM_PADDING = { top: 20, right: CPU_LABEL_WIDTH, bottom: 30, left: MEM_LABEL_WIDTH };
 
 function updateMemoryChart(data) {
     memoryPoints = data.points || [];
     memoryYTicks = data.y_ticks || [];
+    lastCpuTicks = data.cpu_ticks || [];
     memoryScale = data.scale || "linear";
     streamWindow = data.window || streamWindow;
     if (activeTab === "stream") memoryNeedsRedraw = true;
@@ -1216,7 +1220,7 @@ function drawMemoryChart() {
         memoryCtx.fillStyle = "#94a3b8";
         memoryCtx.font = "13px " + getComputedStyle(document.body).fontFamily;
         memoryCtx.textAlign = "center";
-        memoryCtx.fillText("No memory data", cw / 2, ch / 2);
+        memoryCtx.fillText("No samples yet", cw / 2, ch / 2);
         return;
     }
 
@@ -1226,6 +1230,7 @@ function drawMemoryChart() {
         if (memoryPoints[i].y > maxY) maxY = memoryPoints[i].y;
     }
     maxY = Math.max(maxY, 1024 * 1024 * 1024); // min 1GB
+    var cpuMax = lastCpuTicks.length ? lastCpuTicks[lastCpuTicks.length - 1].val : 0;
 
     function mapX(val) {
         return plotLeft + ((val + streamWindow) / streamWindow) * plotWidth;
@@ -1239,6 +1244,10 @@ function drawMemoryChart() {
             return plotTop + plotHeight - (logVal / logMax) * plotHeight;
         }
         return plotTop + plotHeight - (val / maxY) * plotHeight;
+    }
+
+    function mapCpuY(val) {
+        return plotTop + plotHeight - (val / cpuMax) * plotHeight;
     }
 
     // Grid lines
@@ -1257,6 +1266,21 @@ function drawMemoryChart() {
         memoryCtx.stroke();
         memoryCtx.fillText(memoryYTicks[t].label, plotLeft - 6, ty);
     }
+
+    // CPU reads off the right edge, in ticks spaced like the memory grid, so a linear scale shares its lines.
+    memoryCtx.textAlign = "left";
+    memoryCtx.strokeStyle = CPU_COLOR;
+    memoryCtx.fillStyle = CPU_COLOR;
+    for (var u = 0; u < lastCpuTicks.length; u++) {
+        var uy = mapCpuY(lastCpuTicks[u].val);
+        memoryCtx.beginPath();
+        memoryCtx.moveTo(plotLeft + plotWidth, uy);
+        memoryCtx.lineTo(plotLeft + plotWidth + 4, uy);
+        memoryCtx.stroke();
+        memoryCtx.fillText(lastCpuTicks[u].label, plotLeft + plotWidth + 7, uy);
+    }
+    memoryCtx.strokeStyle = "#e2e8f0";
+    memoryCtx.fillStyle = "#64748b";
 
     // X axis ticks
     memoryCtx.textAlign = "center";
@@ -1293,26 +1317,20 @@ function drawMemoryChart() {
     memoryCtx.lineWidth = 2;
     memoryCtx.stroke();
 
-    // CPU on the same axes, scaled to its own maximum: the shape says whether held memory is computing.
-    if (lastCpuPoints && lastCpuPoints.length > 1) {
-        var maxCpu = 0;
-        for (var c = 0; c < lastCpuPoints.length; c++) {
-            if (lastCpuPoints[c].y > maxCpu) maxCpu = lastCpuPoints[c].y;
+    // CPU against the right axis: the shape says whether held memory is computing.
+    if (lastCpuPoints.length > 1 && cpuMax > 0) {
+        memoryCtx.beginPath();
+        for (var k = 0; k < lastCpuPoints.length; k++) {
+            var cx = mapX(lastCpuPoints[k].x);
+            var cy = mapCpuY(lastCpuPoints[k].y);
+            if (k === 0) memoryCtx.moveTo(cx, cy);
+            else memoryCtx.lineTo(cx, cy);
         }
-        if (maxCpu > 0) {
-            memoryCtx.beginPath();
-            for (var k = 0; k < lastCpuPoints.length; k++) {
-                var cx = mapX(lastCpuPoints[k].x);
-                var cy = plotTop + plotHeight - (lastCpuPoints[k].y / maxCpu) * plotHeight;
-                if (k === 0) memoryCtx.moveTo(cx, cy);
-                else memoryCtx.lineTo(cx, cy);
-            }
-            memoryCtx.strokeStyle = "#f59e0b";
-            memoryCtx.lineWidth = 1.5;
-            memoryCtx.setLineDash([4, 3]);
-            memoryCtx.stroke();
-            memoryCtx.setLineDash([]);
-        }
+        memoryCtx.strokeStyle = CPU_COLOR;
+        memoryCtx.lineWidth = 1.5;
+        memoryCtx.setLineDash([4, 3]);
+        memoryCtx.stroke();
+        memoryCtx.setLineDash([]);
     }
 
     memoryCtx.lineWidth = 1;
@@ -1330,19 +1348,11 @@ memoryCanvas.addEventListener("mousemove", function(evt) {
     // convert mx to time
     var t = ((mx - MEM_PADDING.left) / plotWidth) * streamWindow - streamWindow;
 
-    // find closest point
-    var closest = null;
-    var minDist = Infinity;
-    for (var i = 0; i < memoryPoints.length; i++) {
-        var d = Math.abs(memoryPoints[i].x - t);
-        if (d < minDist) {
-            minDist = d;
-            closest = memoryPoints[i];
-        }
-    }
-
-    if (closest && minDist < streamWindow * 0.05) {
-        tooltip.textContent = formatBytes(closest.y) + " at " + closest.x.toFixed(1) + "s";
+    var closest = closestPoint(memoryPoints, t);
+    if (closest && Math.abs(closest.x - t) < streamWindow * 0.05) {
+        var cpu = closestPoint(lastCpuPoints, closest.x);
+        var reading = formatBytes(closest.y) + (cpu ? ", CPU " + cpu.y + "%" : "");
+        tooltip.textContent = reading + " at " + closest.x.toFixed(1) + "s";
         tooltip.style.left = (evt.clientX + 10) + "px";
         tooltip.style.top = (evt.clientY - 30) + "px";
         tooltip.classList.add("visible");
@@ -1354,6 +1364,15 @@ memoryCanvas.addEventListener("mousemove", function(evt) {
 memoryCanvas.addEventListener("mouseleave", function() {
     tooltip.classList.remove("visible");
 });
+
+// The point of `points` nearest time `x`, or null when there are none.
+function closestPoint(points, x) {
+    var closest = null;
+    for (var i = 0; i < points.length; i++) {
+        if (closest === null || Math.abs(points[i].x - x) < Math.abs(closest.x - x)) closest = points[i];
+    }
+    return closest;
+}
 
 // -- Workers --
 var managerCollapsed = {};  // manager id -> folded by this browser
