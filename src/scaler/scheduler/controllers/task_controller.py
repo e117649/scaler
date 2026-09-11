@@ -133,8 +133,11 @@ class VanillaTaskController(TaskController, Looper, Reporter):
             if task.funcObjectId in task_ids_by_object:
                 task_ids_by_object[task.funcObjectId].append(task_id)
             for argument in task.functionArgs:
-                if argument.type == Task.Argument.ArgumentType.objectID and argument.data in task_ids_by_object:
-                    task_ids_by_object[ObjectID(argument.data)].append(task_id)
+                if argument.type != Task.Argument.ArgumentType.objectID:
+                    continue
+                argument_object_id = ObjectID(argument.data)
+                if argument_object_id in task_ids_by_object:
+                    task_ids_by_object[argument_object_id].append(task_id)
         return task_ids_by_object
 
     async def on_task_new(self, task: Task):

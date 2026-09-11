@@ -13,8 +13,7 @@ CLEANUP_INTERVAL_SECONDS = 1
 # should raise it via -sri.
 STATUS_REPORT_INTERVAL_SECONDS = 1
 
-# how many objects each status report carries, biggest first, and so how deep a monitor can page through
-# them. Measured at about 240 bytes an object per report, against a store whose object count is unbounded.
+# biggest objects each status report carries, at about 240 bytes each, out of a store with no bound
 OBJECT_REPORT_LIMIT = 500
 
 # number of seconds for profiling
@@ -114,8 +113,7 @@ DEFAULT_LOGGING_PATHS = ("/dev/stdout",)
 # Pushing faster mostly redraws the same picture: one tick is about a pixel over the stream's 5 minute window.
 DEFAULT_GUI_BROADCAST_INTERVAL_SECONDS = 0.5
 
-# tasks the web GUI retains, and the state changes it retains alongside them. Paging is server-side, so
-# this bounds the GUI process's memory rather than what a browser can reach.
+# tasks and state changes the web GUI retains; paging is server-side, so this bounds its own memory
 DEFAULT_GUI_TASK_LOG_MAX_SIZE = 50_000
 
 # =======================

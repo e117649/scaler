@@ -1,7 +1,7 @@
 """Per-browser view state: paging, sorting and settings are served per socket.
 
-The web GUI sends each browser one page of workers rather than the whole fleet, so the page index,
-the sort column and the chart settings all live on the connection instead of in shared server state.
+The web GUI sends each browser one page of workers rather than the whole fleet.
+The page index, the sort column and the chart settings all live on the connection, not in shared state.
 """
 
 import unittest

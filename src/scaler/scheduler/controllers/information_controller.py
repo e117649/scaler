@@ -16,8 +16,7 @@ from scaler.scheduler.controllers.worker_manager_controller import WorkerManager
 from scaler.utility.memory import get_memory_limit_and_available, get_process_memory
 from scaler.utility.mixins import Looper
 
-# How many of an object's tasks travel with it. One object shared by a whole graph has a task per node.
-# The monitor shows the count with a sample of the ids rather than the whole list.
+# An object's task ids that travel with it; a graph-wide object has one per node, so the rest is a count.
 OBJECT_TASK_ID_LIMIT = 20
 
 

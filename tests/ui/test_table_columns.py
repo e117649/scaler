@@ -1,9 +1,7 @@
 """Every sortable table's columns, which three files have to agree on.
 
-A table's field list in app.js is its column order: the page builds a cell per entry, fills it from the
-row field of the same name, and sends a header click back by that name. A column added to one file and
-not the others silently writes into the wrong cell, so this pins the list, the headers and the fields the
-server will sort by together.
+A table's field list in app.js is its column order: one cell per entry, filled from the row field of that name.
+A column added to one file and not the others writes into the wrong cell, so this pins all three together.
 """
 
 import json
@@ -48,7 +46,7 @@ def columns(listing: str) -> List[str]:
     """The column order app.js holds for one table."""
     source = (STATIC_DIR / "app.js").read_text()
     found = re.search(rf"var {listing} = (\[.*?\]);", source, re.DOTALL)
-    assert found is not None, f"app.js no longer declares {listing}"
+    assert found is not None, f"app.js declares no {listing}"
     return json.loads(re.sub(r"\s+", " ", found.group(1)))
 
 

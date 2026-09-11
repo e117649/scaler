@@ -17,8 +17,7 @@ def start_webgui(config: WebGUIConfig) -> None:
     def _raise_keyboard_interrupt(*_args: object) -> None:
         raise KeyboardInterrupt
 
-    # Route SIGTERM through the same teardown as Ctrl-C, which is how the `scaler` launcher stops this
-    # process. On Windows SIGTERM cannot be delivered externally, and registering the handler is harmless.
+    # The `scaler` launcher stops this process with SIGTERM; on Windows it cannot be delivered, harmlessly.
     signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
 
     app = create_app(config)

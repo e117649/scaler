@@ -16,11 +16,10 @@ from scaler.worker.agent.processor_holder import ProcessorHolder
 
 
 def _host_network_counters() -> Tuple[int, int]:
-    """Host-wide bytes sent and received. Every worker on a host reports the same pair, so the monitor
-    reads it once per hostname rather than summing it across the workers there.
+    """Host-wide bytes sent and received, 0 where the host has no counters to read.
 
-    Zero when the host has no counters to read, which is a missing metric and not a reason to stop a
-    heartbeat the scheduler needs.
+    Every worker on a host reports the same pair, so the monitor reads it once per hostname, never summed.
+    A missing counter is not a reason to stop a heartbeat the scheduler needs.
     """
     try:
         counters = psutil.net_io_counters()

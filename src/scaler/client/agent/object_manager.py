@@ -66,8 +66,7 @@ class ClientObjectManager(ObjectManager):
             serializer_index = instruction.objectMetadata.objectTypes.index(ObjectMetadata.ObjectContentType.serializer)
             self._sent_serializer_id = ObjectID(instruction.objectMetadata.objectIds[serializer_index])
 
-        # Every field of the instruction is carried through, and each Cap'n Proto list is read once. An
-        # object the scheduler cannot describe is one this filter dropped a field from.
+        # Read each Cap'n Proto list once and carry every field: a dropped one is an object nobody describes.
         object_sizes = list(instruction.objectMetadata.objectSizes)
         object_ids = list(instruction.objectMetadata.objectIds)
         object_sizes += [0] * (len(object_ids) - len(object_sizes))

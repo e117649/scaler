@@ -1,7 +1,7 @@
 """The task list and the task log, both paged server-side.
 
-A browser is sent one page whatever the GUI retains, so raising the retention grows what an operator can
-page back through without growing what crosses the socket or what the browser has to render.
+A browser is sent one page whatever the GUI retains.
+Raising the retention grows what an operator can page back through, not what crosses the socket.
 """
 
 import unittest

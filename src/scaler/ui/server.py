@@ -1,7 +1,7 @@
 """The web GUI's HTTP server: static files, a server-sent event stream, and one view endpoint.
 
-The GUI pushes far more than it receives, so the browser holds a `text/event-stream` for the pushes and
-posts its view changes back. That needs nothing beyond `http.server`.
+The GUI pushes far more than it receives, so the browser holds a `text/event-stream` and posts view changes back.
+That needs nothing beyond `http.server`.
 """
 
 import json
@@ -11,15 +11,14 @@ import ssl
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from scaler.config.common.security import SecurityConfig
 from scaler.ui.app import STATIC_DIR, WebUIApp
 
 logger = logging.getLogger(__name__)
 
-# How long a stream waits for a payload before writing a comment line. Without it a proxy or a NAT is
-# free to drop an idle connection, and the browser only learns when the next update never arrives.
+# How long a stream waits for a payload before writing a comment line, so a proxy or a NAT leaves it open.
 STREAM_KEEPALIVE_SECONDS = 15.0
 
 MAX_VIEW_REQUEST_BYTES = 64 * 1024
@@ -69,8 +68,7 @@ class WebGUIRequestHandler(BaseHTTPRequestHandler):
             stream.view.apply_view(request.get("view", {}))
             stream.view.apply_settings(request.get("settings", {}))
         except (TypeError, ValueError):
-            # A page or window value that is not a number has to be answered, not raised out of the
-            # handler, where it would become a 500 and a traceback in the log.
+            # A page or window value that is not a number is answered, not raised: raising is a 500.
             self.send_error(HTTPStatus.BAD_REQUEST, "malformed view")
             return
 
@@ -81,7 +79,7 @@ class WebGUIRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002, the base class names it
         logger.debug("%s %s", self.address_string(), format % args)
 
-    def __read_json_body(self) -> Optional[dict]:
+    def __read_json_body(self) -> Optional[Dict[str, Any]]:
         """The posted object, or None when the request was answered with an error."""
         try:
             length = int(self.headers.get("Content-Length", 0))
@@ -127,7 +125,7 @@ class WebGUIRequestHandler(BaseHTTPRequestHandler):
                     self.wfile.flush()
                     continue
                 self.__write_event(payload)
-        except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+        except OSError:  # the browser went away mid-write
             pass
         finally:
             self.app.remove_browser(stream.browser_id)
@@ -140,8 +138,8 @@ class WebGUIRequestHandler(BaseHTTPRequestHandler):
     def __send_static(self, name: str) -> None:
         """Serve one of the files the static directory holds, matched by name.
 
-        The request never joins a path. It picks from what the directory lists, so a name carrying `..`
-        or an absolute path matches nothing and gets a 404.
+        The request never joins a path.
+        It picks from what the directory lists, so a `..` or an absolute path matches nothing and gets a 404.
         """
         for asset in STATIC_DIR.iterdir():
             if asset.name == name and asset.is_file():
@@ -152,14 +150,13 @@ class WebGUIRequestHandler(BaseHTTPRequestHandler):
 
     def __send_file(self, path: Path) -> None:
         content_type, _ = mimetypes.guess_type(path.name)
-        # Every asset is served from the running package. A cached copy of an older one is only ever a
-        # way for a browser to disagree with the server it is talking to.
         self.__send_bytes(path.read_bytes(), content_type or "application/octet-stream")
 
     def __send_bytes(self, body: bytes, content_type: str) -> None:
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        # Assets come from the running package, so a cached copy only lets a browser disagree with it.
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.end_headers()
         self.wfile.write(body)

@@ -227,8 +227,7 @@ function sendView(view) {
     postView({ view: view });
 }
 
-// The stream is one-way, so a view change is a request of its own. browserId ties it to the stream:
-// without it the server has no way to tell which browser's page and sort order to move.
+// The stream is one-way, so a view change is a request of its own; browserId says whose view to move.
 function postView(body) {
     if (browserId === null) return;
     body.browser_id = browserId;
@@ -244,8 +243,7 @@ function postView(body) {
 }
 
 // -- Server-sent events --
-// EventSource reconnects on its own, and the server answers a new stream with a full state, so a
-// dropped connection needs no backoff here.
+// EventSource reconnects on its own and a new stream opens with a full state, so no backoff here.
 function connect() {
     events = new EventSource("/events");
 
@@ -270,8 +268,7 @@ function connect() {
     };
 }
 
-// A full state and an update carry the same sections, so both are applied the same way; the full state
-// only adds the browser id every later view request has to name.
+// A full state and an update carry the same sections, the full state adding only the browser id.
 function handleMessage(data) {
     if (data.type === "full_state" && typeof data.browser_id === "number") browserId = data.browser_id;
 
@@ -335,8 +332,7 @@ function updateStorage(storage) {
     if (activeTab === "live") renderStorage(storage);
 }
 
-// A pending count that does not fall is a fetch nobody can answer: the client blocks in get_object until
-// the object is created, so the wait is unbounded until something else times out.
+// A pending count that does not fall is a fetch nobody can answer: get_object waits without a bound.
 function renderStorage(storage) {
     ossObjects.textContent = storage.objects;
     ossUnique.textContent = storage.unique_objects;
@@ -669,8 +665,7 @@ setupSort("objects-table", OBJECT_FIELDS, function(field, ascending) {
     sendView({ objects_sort: field, objects_sort_ascending: ascending, objects_page: 0 });
 });
 
-// Columns drawn as a bar rather than as text, and the row field each is a fraction of. A number is a
-// fixed maximum; a string names another field of the same row.
+// Columns drawn as a bar: a number is the fixed maximum, a string names the row field to divide by.
 var WORKER_GAUGE_FIELDS = {
     "agt_cpu": {max: 100, unit: "%"},
     "agt_rss": {max: "total_rss", unit: ""},
@@ -842,8 +837,7 @@ function makeTaskLogRow(e) {
     return tr;
 }
 
-// Badge shows the running total of completed tasks; once the server has dropped the oldest it appends how
-// many it still holds, e.g. "60123 (holding 50000)".
+// Badge counts every completed task, and once the server drops the oldest, "60123 (holding 50000)".
 function updateTaskLogBadge() {
     tasklogCount.textContent = taskLogTotal > taskLogHeld
         ? taskLogTotal + " (holding " + taskLogHeld + ")"
@@ -1280,8 +1274,7 @@ function drawMemoryChart() {
     memoryCtx.lineWidth = 2;
     memoryCtx.stroke();
 
-    // CPU on the same axes, scaled to its own maximum: the shape is what matters, and it shows at a
-    // glance whether a cluster holding memory is actually computing.
+    // CPU on the same axes, scaled to its own maximum: the shape says whether held memory is computing.
     if (lastCpuPoints && lastCpuPoints.length > 1) {
         var maxCpu = 0;
         for (var c = 0; c < lastCpuPoints.length; c++) {
@@ -1534,8 +1527,7 @@ function buildProcessorRow(proc) {
     return tr;
 }
 
-// The queue the scheduler has given this worker but its processors have not started. The worker reports
-// how deep its queue is; the ids are the ones this monitor saw arrive.
+// Given to this worker but not started: the worker counts them, the ids are the ones the monitor saw.
 function buildQueuePanel(worker) {
     var panel = document.createElement("div");
     panel.className = "worker-queue";

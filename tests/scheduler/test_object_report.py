@@ -1,7 +1,6 @@
 """What the scheduler reports about the objects it tracks.
 
-The store knows object IDs and never sees a task, so the join between an object and the tasks holding it
-only exists here.
+The store knows object IDs and never sees a task, so the join between an object and its tasks exists only here.
 """
 
 import unittest

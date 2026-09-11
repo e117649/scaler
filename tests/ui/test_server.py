@@ -1,7 +1,6 @@
 """The web GUI's HTTP surface: the page, its static files, the event stream and the view endpoint.
 
-The GUI serves these from `http.server`, so each is exercised over a real socket rather than through a
-framework's test client.
+The GUI serves these from `http.server`, so each is exercised over a real socket, not a test client.
 """
 
 import json
@@ -11,6 +10,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from typing import Any, Dict
 
 from scaler.config.section.webgui import WebGUIConfig
 from scaler.config.types.address import AddressConfig
@@ -106,13 +106,13 @@ class TestWebGUIServer(unittest.TestCase):
             connection.sendall(f"GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".encode())
             return connection.recv(4096)
 
-    def __next_event(self, stream) -> dict:
+    def __next_event(self, stream: Any) -> Dict[str, Any]:
         for line in stream:
             if line.startswith(b"data: "):
                 return json.loads(line[len(b"data: ") :])
         raise AssertionError("the stream ended without an event")
 
-    def __post_view(self, body: dict) -> dict:
+    def __post_view(self, body: Dict[str, Any]) -> Dict[str, Any]:
         request = urllib.request.Request(
             f"{self.base}/view", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}
         )

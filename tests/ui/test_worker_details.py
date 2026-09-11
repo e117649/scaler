@@ -1,12 +1,11 @@
 """The Workers tab: what each worker is running, and what is queued behind it.
 
-The scheduler reports a task running the moment it dispatches it, so a task is held by a worker well
-before a processor picks it up. The processors name what is on a core; everything else the worker holds
-is waiting there.
+The scheduler reports a task running the moment it dispatches it, well before a processor picks it up.
+The processors name what is on a core, and everything else the worker holds is waiting there.
 """
 
 import unittest
-from typing import List
+from typing import Any, Dict, List
 
 from scaler.config.types.address import AddressConfig
 from scaler.protocol.capnp import (
@@ -97,7 +96,7 @@ def report(app: WebUIApp, running: List[int], queued: int = 0, worker: bytes = W
     app._process_scheduler(StateScheduler.from_bytes(status.to_bytes()))
 
 
-def worker_card(app: WebUIApp) -> dict:
+def worker_card(app: WebUIApp) -> Dict[str, Any]:
     section = app._worker_details_section(BrowserView(), _RenderCache())
     return section["worker_details"][0]["workers"][0]
 

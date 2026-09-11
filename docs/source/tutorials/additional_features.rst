@@ -89,10 +89,8 @@ What the Web GUI shows:
 * **Clients**: one row per connected client, with its host, tasks in flight, finished and failed counts, CPU, memory and latency. Finished counts every task that reached a terminal state, cancelled ones included.
 * **Objects**: the biggest objects the scheduler tracks, with their size, the client that created them, and the tasks holding them, a page at a time.
 
-The Live tab also carries an Object Storage card: how many objects the storage server holds, how many
-distinct payloads are behind them, the bytes they occupy, and how many requests are waiting for an object
-that does not exist yet. A waiting count that does not fall is a fetch nobody can answer, because a client
-blocks in ``get_object`` until the object is created.
+The Live tab also carries an Object Storage card: how many objects the storage server holds, how many distinct payloads are behind them, the bytes they occupy, and how many requests are waiting for an object that does not exist yet.
+A waiting count that does not fall is a fetch nobody can answer, because a client blocks in ``get_object`` until the object is created.
 
 .. note::
    Worker memory is reported as PSS (proportional set size) on Linux, so the shared copy-on-write pages a

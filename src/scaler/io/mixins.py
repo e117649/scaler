@@ -208,8 +208,7 @@ class SyncConnector(metaclass=abc.ABCMeta):
 class ObjectStorageTotals:
     """What the object storage server holds, as its infoGetTotal request answers.
 
-    Fields the server does not answer with read as 0, so a newer reader stays usable against an older
-    server.
+    Fields the server does not answer with read as 0, so a newer reader stays usable against an older one.
     """
 
     object_count: int = 0  # object IDs the server holds
@@ -222,7 +221,7 @@ class ObjectStorageTotals:
     @classmethod
     def from_payload(cls, payload: bytes) -> "ObjectStorageTotals":
         """Read the fields the server answered with and leave the rest at 0."""
-        field_count = min(len(payload) // 8, len(dataclasses.fields(cls)))
+        field_count = min(len(payload) // struct.calcsize("<Q"), len(dataclasses.fields(cls)))
         return cls(*struct.unpack_from(f"<{field_count}Q", payload))
 
 

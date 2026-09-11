@@ -1,7 +1,7 @@
 """What the client agent forwards to the scheduler when the client creates objects.
 
-The agent filters out objects it has already sent, and everything the instruction carries has to survive
-that filter. The scheduler describes an object from these fields alone.
+The agent filters out objects it has already sent, and everything the instruction carries has to survive that filter.
+The scheduler describes an object from these fields alone.
 """
 
 import unittest

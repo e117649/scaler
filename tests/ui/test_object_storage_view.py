@@ -1,7 +1,7 @@
 """What the monitor shows about the object storage server, and about the objects it holds.
 
-The store reports what it holds through its `infoGetTotal` request, and the scheduler reports which tasks
-name each object, because the store never sees a task.
+The store reports what it holds through its `infoGetTotal` request.
+The scheduler reports which tasks name each object, because the store never sees a task.
 """
 
 import struct

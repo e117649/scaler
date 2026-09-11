@@ -16,9 +16,7 @@ from scaler.utility.mixins import Looper, Reporter
 
 logger = logging.getLogger(__name__)
 
-# How long to wait for the storage server to answer what it holds. The request rides the same connector
-# as every object fetch. An unbounded wait would hold this routine open for as long as the server is
-# unreachable.
+# How long to wait for the storage server to answer what it holds; unbounded would wedge this routine.
 STORAGE_TOTALS_TIMEOUT_SECONDS = 5.0
 
 
@@ -46,16 +44,13 @@ class VanillaObjectController(ObjectController, Looper, Reporter):
         self._binder: Optional[AsyncBinder] = None
         self._binder_monitor: Optional[AsyncPublisher] = None
         self._connector_storage: Optional[AsyncObjectStorageConnector] = None
-        # payload bytes per object, keyed by the raw id bytes: callers pass ids straight off the wire and
-        # constructing an ObjectID here would validate a length the monitor has no reason to care about
+        # keyed by raw id bytes: ids arrive off the wire, and an ObjectID would validate a length nobody needs
         self._object_sizes: Dict[bytes, int] = {}
 
         self._client_manager: Optional[ClientController] = None
         self._worker_manager: Optional[WorkerController] = None
 
-        # The storage server's own view of what it holds, refreshed by the routine below. It answers one
-        # request per round trip, so the status frame reports the last answer rather than waiting for a new
-        # one.
+        # The storage server's own view, refreshed by its routine: a status frame reports the last answer.
         self._storage_totals = ObjectStorageTotals()
 
     def register(
@@ -131,8 +126,8 @@ class VanillaObjectController(ObjectController, Looper, Reporter):
     def get_largest_objects(self, limit: int) -> List[ObjectDetail]:
         """The `limit` biggest tracked objects, biggest first, which is what a full store is made of.
 
-        Runs on the scheduler's event loop once a status frame, so it takes the top `limit` with a heap.
-        Sorting every object instead cost seconds once a client had sent a few hundred thousand.
+        A heap, because this runs on the scheduler's event loop.
+        Sorting a few hundred thousand objects every status frame costs seconds.
         """
         largest = heapq.nlargest(limit, self._object_tracker.items(), key=lambda item: self.get_object_size(item[0]))
         return [
@@ -196,7 +191,7 @@ class VanillaObjectController(ObjectController, Looper, Reporter):
             logger.error(f"received object creation from {source!r} for unknown client {instruction.objectUser!r}")
             return
 
-        # objectSizes is newer than the other three; an older client omits it, so pad rather than zip short
+        # objectSizes is newer than the other three, so an older client omits it: pad rather than zip short
         sizes = list(instruction.objectMetadata.objectSizes)
         object_ids = list(instruction.objectMetadata.objectIds)
         sizes += [0] * (len(object_ids) - len(sizes))

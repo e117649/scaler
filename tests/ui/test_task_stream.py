@@ -1,10 +1,11 @@
 """The worker task stream: one bar per task a processor actually ran.
 
-The scheduler reports a task running when it dispatches it, so a worker holds a queue of tasks that have
-not started. Only the processors say what is on a core, and that is what the stream draws.
+The scheduler reports a task running when it dispatches it, so a worker holds a queue of tasks that have not started.
+Only the processors say what is on a core, and that is what the stream draws.
 """
 
 import unittest
+from typing import Any, Dict, List
 
 from scaler.config.types.address import AddressConfig
 from scaler.protocol.capnp import StateTask, StateWorker, TaskState, WorkerState
@@ -53,7 +54,7 @@ def finish(stream: TaskStreamState, index: int, duration_s: float, worker: str =
     )
 
 
-def running_bars(stream: TaskStreamState) -> list:
+def running_bars(stream: TaskStreamState) -> List[Dict[str, Any]]:
     """Bars the stream draws as still running, which it outlines in yellow."""
     return [bar for bar in stream.get_render_data(5)["bars"] if bar["oc"] == "#eab308"]
 

@@ -95,12 +95,7 @@ def show_status(status: BaseMessage, screen):
     )
     client_table = __generate_keyword_data(
         "client_manager",
-        {
-            client.clientId.decode() if isinstance(client.clientId, (bytes, bytearray)) else str(client.clientId): (
-                client.numTask
-            )
-            for client in status.clientManager.clients
-        },
+        {client.clientId.decode(): client.numTask for client in status.clientManager.clients},
         key_col_length=18,
     )
 

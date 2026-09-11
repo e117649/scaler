@@ -1,7 +1,7 @@
 """The Clients page, and the client each task is attributed to.
 
-The scheduler reports one `ClientStatus` per connected client, and every `StateTask` carries the client
-that submitted it, so the GUI can say who a task belongs to and how much work each client has in flight.
+The scheduler reports one `ClientStatus` per connected client, and every `StateTask` names its client.
+The GUI joins the two to say who a task belongs to and how much work each client has in flight.
 """
 
 import unittest

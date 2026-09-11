@@ -111,10 +111,7 @@ class VanillaClientController(ClientController, Looper, Reporter):
         connected.heartbeat = info
 
     def notice_client_activity(self, client_id: ClientID):
-        # Any inbound message from a tracked client counts as liveness for
-        # the heartbeat-based timeout. We deliberately don't register new
-        # clients here -- a client must complete the proper ClientHeartbeat
-        # handshake before it shows up in ``_client_last_seen``.
+        # Any message from a tracked client counts as liveness; only a heartbeat registers a new one.
         connected = self._connected_clients.get(client_id)
         if connected is None:
             return

@@ -1,14 +1,13 @@
 """The GUI state is written by the batcher thread and read by each browser's own connection thread.
 
-`http.server` gives every connection its own thread, so a browser connecting or paging reads this state
-while the batcher is rewriting it. Without one lock over both, a reader walks a collection the batcher is
-replacing and the request dies with a traceback instead of a page.
+`http.server` gives every connection its own thread, so a browser reads this state as the batcher rewrites it.
+Without one lock over both, a reader walks a collection being replaced and the request dies with a traceback.
 """
 
 import threading
 import time
 import unittest
-from typing import List
+from typing import Any, Callable, Dict, List
 
 from scaler.config.types.address import AddressConfig
 from scaler.protocol.capnp import (
@@ -72,6 +71,7 @@ class TestStateLock(unittest.TestCase):
         app = WebUIApp(WebGUIConfig(monitor_address=AddressConfig.from_string("tcp://127.0.0.1:6380")))
         failures: List[BaseException] = []
         stop = threading.Event()
+        self.addCleanup(stop.set)  # a failure before the join below must not leave the threads running
 
         def batch() -> None:
             generation = 0
@@ -88,7 +88,7 @@ class TestStateLock(unittest.TestCase):
                 with app._state_lock:
                     app._batch_once()
 
-        def read(build) -> None:
+        def read(build: Callable[[BrowserView], Dict[str, Any]]) -> None:
             while not stop.is_set():
                 try:
                     build(BrowserView())

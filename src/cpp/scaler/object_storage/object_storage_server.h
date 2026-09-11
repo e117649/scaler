@@ -55,8 +55,7 @@ private:
     struct PendingRequest {
         std::shared_ptr<Client> client;
         ObjectRequestHeader requestHeader;
-        // When the request started waiting. A client blocks in getObject until the object is created, so
-        // the age of the oldest of these is how long something has been stuck.
+        // getObject blocks until the object is created, so the oldest of these is how long one has waited.
         std::chrono::steady_clock::time_point waitingSince {std::chrono::steady_clock::now()};
     };
 
