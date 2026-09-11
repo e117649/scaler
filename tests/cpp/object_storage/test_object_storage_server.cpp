@@ -685,7 +685,10 @@ TEST_F(ObjectStorageServerTest, TestInfoGetTotalRequest)
         return fields;
     };
 
-    auto testInfoGetTotalRequest = [&](uint64_t expectedNumIDs,
+    // The server reads one message at a time from one socket every client shares, so requests sent on
+    // two connections reach it in either order. Each call names the connection to ask on.
+    auto testInfoGetTotalRequest = [&](ObjectStorageClient& asking,
+                                       uint64_t expectedNumIDs,
                                        uint64_t expectedNumObjs,
                                        uint64_t expectedNumBytes,
                                        uint64_t expectedNumPending    = 0,
@@ -697,8 +700,8 @@ TEST_F(ObjectStorageServerTest, TestInfoGetTotalRequest)
             .requestType   = ObjectRequestType::INFO_GET_TOTAL,
         };
 
-        client->writeRequest(requestHeader, std::nullopt);
-        client->readResponse(responseHeader, responsePayload);
+        asking.writeRequest(requestHeader, std::nullopt);
+        asking.readResponse(responseHeader, responsePayload);
 
         EXPECT_EQ(responseHeader.objectID, requestHeader.objectID);
         EXPECT_EQ(responseHeader.payloadLength, payloadLength);
@@ -714,7 +717,7 @@ TEST_F(ObjectStorageServerTest, TestInfoGetTotalRequest)
         EXPECT_EQ(fields[4], expectedNumPendingIDs);
     };
 
-    testInfoGetTotalRequest(0, 0, 0);
+    testInfoGetTotalRequest(*client, 0, 0, 0);
 
     // Set an object, we should see numXXX increase:
     {
@@ -729,7 +732,7 @@ TEST_F(ObjectStorageServerTest, TestInfoGetTotalRequest)
         client->readResponse(responseHeader, responsePayload);
     }
 
-    testInfoGetTotalRequest(1, 1, payloadContent.size());
+    testInfoGetTotalRequest(*client, 1, 1, payloadContent.size());
 
     // Duplicate the object, we should see numID increases but not the other two
     {
@@ -747,7 +750,7 @@ TEST_F(ObjectStorageServerTest, TestInfoGetTotalRequest)
         client->readResponse(responseHeader, responsePayload);
         EXPECT_EQ(responseHeader.responseType, ObjectResponseType::DUPLICATE_O_K);
     }
-    testInfoGetTotalRequest(2, 1, payloadContent.size());
+    testInfoGetTotalRequest(*client, 2, 1, payloadContent.size());
 
     // Delete the object represented by this objectID, notice that the actual object is
     // still in the system because there is another ID tied to it (2, 3, 4, 5).
@@ -763,7 +766,7 @@ TEST_F(ObjectStorageServerTest, TestInfoGetTotalRequest)
         client->readResponse(responseHeader, responsePayload);
     }
 
-    testInfoGetTotalRequest(1, 1, payloadContent.size());
+    testInfoGetTotalRequest(*client, 1, 1, payloadContent.size());
 
     // Actually delete the object
     {
@@ -779,9 +782,10 @@ TEST_F(ObjectStorageServerTest, TestInfoGetTotalRequest)
     }
 
     // The system shouldn't own any objects
-    testInfoGetTotalRequest(0, 0, 0);
+    testInfoGetTotalRequest(*client, 0, 0, 0);
 
     // A get for an object nobody has created waits, and the wait is what the last three fields report.
+    // It is never answered, so asking on that same connection is what proves the server has read it.
     auto waitingClient = getClient("waiting-client");
     {
         ObjectRequestHeader requestHeader {
@@ -794,7 +798,7 @@ TEST_F(ObjectStorageServerTest, TestInfoGetTotalRequest)
         waitingClient->writeRequest(requestHeader, std::nullopt);
     }
 
-    testInfoGetTotalRequest(0, 0, 0, 1, 1);
+    testInfoGetTotalRequest(*waitingClient, 0, 0, 0, 1, 1);
 
     // Creating it answers the waiting client and empties the queue.
     {
@@ -814,7 +818,7 @@ TEST_F(ObjectStorageServerTest, TestInfoGetTotalRequest)
     waitingClient->readResponse(waitingHeader, waitingPayload);
     EXPECT_EQ(waitingHeader.responseType, ObjectResponseType::GET_O_K);
 
-    testInfoGetTotalRequest(1, 1, payloadContent.size());
+    testInfoGetTotalRequest(*client, 1, 1, payloadContent.size());
 }
 
 // This test fixture is specifically for verifying server logging behavior.
