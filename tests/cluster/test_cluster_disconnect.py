@@ -1,10 +1,11 @@
+import concurrent.futures
 import multiprocessing
 import os
 import signal
 import sys
 import time
 import unittest
-from concurrent.futures import CancelledError, TimeoutError
+from concurrent.futures import CancelledError
 
 from scaler import Client, SchedulerClusterCombo
 from scaler.config.common.logging import LoggingConfig
@@ -113,8 +114,11 @@ class TestClusterDisconnect(unittest.TestCase):
 
             self.combo._scheduler.kill()  # scheduler vanishes: crash / network partition
 
-            with self.assertRaises((DisconnectedError, TimeoutError)):
+            # On Python 3.10 the builtin TimeoutError the agent raises is not concurrent.futures.TimeoutError.
+            with self.assertRaises((DisconnectedError, TimeoutError)) as caught:
                 future.result(timeout=30)
+
+            self.assertIn("scheduler", str(caught.exception))
         finally:
             try:
                 client.disconnect()
@@ -170,7 +174,7 @@ class TestGracefulWorkerShutdown(unittest.TestCase):
         try:
             result = future.result(timeout=_GRACEFUL_SHUTDOWN_MAX_SECONDS)
             self.assertEqual(result, _TASK_DURATION_SECONDS)
-        except TimeoutError:
+        except concurrent.futures.TimeoutError:
             self.fail(
                 f"Task was not re-dispatched within {_GRACEFUL_SHUTDOWN_MAX_SECONDS}s -- "
                 "WorkerDisconnectNotification may not have reached the scheduler "
