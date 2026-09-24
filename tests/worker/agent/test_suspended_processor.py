@@ -9,7 +9,6 @@ import unittest
 
 from scaler import Client, SchedulerClusterCombo
 from scaler.config.defaults import DEFAULT_HEARTBEAT_INTERVAL_SECONDS
-from scaler.utility.exceptions import ProcessorDiedError
 from scaler.utility.logging.utility import setup_logger
 from scaler.utility.network_util import get_available_tcp_port
 from tests.utility.utility import logging_test_name
@@ -73,8 +72,8 @@ class TestDyingSuspendedProcessor(unittest.TestCase):
             # Kill the suspended process
             os.kill(parent_pid, signal.SIGKILL)  # type: ignore[attr-defined, unused-ignore]
 
-            with self.assertRaises(ProcessorDiedError):
-                future.result(timeout=RESULT_TIMEOUT_SECONDS)
+            # the scheduler runs a task whose processor died again, so the parent starts over and finishes
+            self.assertEqual(future.result(timeout=RESULT_TIMEOUT_SECONDS), "child done")
 
             # The worker owning the killed processor must still be able to run tasks.
             self.assertEqual(client.submit(square, 6).result(timeout=RESULT_TIMEOUT_SECONDS), 36)

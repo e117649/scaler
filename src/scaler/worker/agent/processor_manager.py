@@ -199,10 +199,12 @@ class VanillaProcessorManager(ProcessorManager):
                 detached=True,
             )
 
+            # failedWorkerDied, not failed: the task did not raise, its processor died under it, so the scheduler runs
+            # it again rather than failing it to the client
             await self._task_manager.on_task_result(
                 TaskResult(
                     taskId=task_id,
-                    resultType=TaskResultType.failed,
+                    resultType=TaskResultType.failedWorkerDied,
                     metadata=profile_result.serialize(),
                     results=[bytes(result_object_id)],
                 )
