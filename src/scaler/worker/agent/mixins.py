@@ -99,10 +99,6 @@ class ProcessorManager(metaclass=abc.ABCMeta):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def current_processor_is_initialized(self) -> bool:
-        raise NotImplementedError()
-
-    @abc.abstractmethod
     def current_task(self) -> Optional[Task]:
         raise NotImplementedError()
 

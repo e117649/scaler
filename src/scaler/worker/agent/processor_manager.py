@@ -69,6 +69,13 @@ class VanillaProcessorManager(ProcessorManager):
         self._holders_by_processor_id: Dict[ProcessorID, ProcessorHolder] = {}
 
         self._can_accept_task_lock: asyncio.Lock = asyncio.Lock()
+        # Who holds the lock while the current processor starts. A processor that replaces one that was running a
+        # task, or that had not started yet, holds it until it is initialized. One that replaces an idle processor
+        # does not: the task manager already holds the lock as its claim on the next task, and keeps it.
+        self._release_lock_when_initialized = True
+        self._current_processor_initialized = asyncio.Event()
+        # a task handed over while the current processor is still starting, until it starts or is canceled
+        self._task_waiting_for_processor: Optional[Task] = None
 
         self._binder_internal: Optional[AsyncBinder] = None
 
@@ -93,7 +100,8 @@ class VanillaProcessorManager(ProcessorManager):
 
         await self._connector_storage.wait_until_connected()
 
-        self.__start_new_processor()  # we can start the processor now that we know the storage address.
+        # we can start the processor now that we know the storage address.
+        self.__start_new_processor(release_lock_when_initialized=True)
 
     def can_accept_task(self) -> bool:
         return not self._can_accept_task_lock.locked()
@@ -115,12 +123,24 @@ class VanillaProcessorManager(ProcessorManager):
 
         self._holders_by_processor_id[processor_id] = self._current_holder
         self._current_holder.initialize(processor_id)
+        self._current_processor_initialized.set()
 
-        self._can_accept_task_lock.release()
+        if self._release_lock_when_initialized:
+            self._can_accept_task_lock.release()
 
     async def on_task(self, task: Task) -> bool:
         assert self._can_accept_task_lock.locked()
-        assert self.current_processor_is_initialized()
+
+        if not self._current_processor_initialized.is_set():
+            # the idle processor the task manager claimed died, and its replacement is still starting
+            self._task_waiting_for_processor = task
+            await self._current_processor_initialized.wait()
+
+            if self._task_waiting_for_processor is None:  # canceled meanwhile, so the claim goes unused
+                self._can_accept_task_lock.release()
+                return False
+
+            self._task_waiting_for_processor = None
 
         holder = self._current_holder
 
@@ -136,9 +156,14 @@ class VanillaProcessorManager(ProcessorManager):
     async def on_cancel_task(self, task_id: TaskID) -> Optional[Task]:
         assert self._current_holder is not None
 
+        if self._task_waiting_for_processor is not None and self._task_waiting_for_processor.taskId == task_id:
+            waiting_task = self._task_waiting_for_processor
+            self._task_waiting_for_processor = None
+            return waiting_task
+
         if self.current_task_id() == task_id:
             current_task = self.current_task()
-            self.__restart_current_processor(f"cancel task_id={task_id.hex()}")
+            self.__restart_current_processor(f"cancel task_id={task_id.hex()}", release_lock_when_initialized=True)
             return current_task
 
         if task_id in self._suspended_holders_by_task_id:
@@ -174,7 +199,8 @@ class VanillaProcessorManager(ProcessorManager):
 
         reason = "process died"
         if holder == self._current_holder:
-            self.__restart_current_processor(reason)
+            # an idle processor's lock is the task manager's claim on the next task, which the new processor keeps
+            self.__restart_current_processor(reason, release_lock_when_initialized=task is not None)
         else:
             self.__kill_processor(reason, holder)
 
@@ -224,13 +250,13 @@ class VanillaProcessorManager(ProcessorManager):
 
         logger.info(f"{self._identity!r}: suspend Processor[{holder.pid()}]")
 
-        self.__start_new_processor()
+        self.__start_new_processor(release_lock_when_initialized=True)
 
         return True
 
     async def on_resume_task(self, task_id: TaskID) -> bool:
         assert self._can_accept_task_lock.locked()
-        assert self.current_processor_is_initialized()
+        await self._current_processor_initialized.wait()  # the processor may have been replaced since the claim
 
         if self.current_task() is not None:
             return False
@@ -314,9 +340,6 @@ class VanillaProcessorManager(ProcessorManager):
 
         self.__kill_all_processors(reason)
 
-    def current_processor_is_initialized(self) -> bool:
-        return self._current_holder is not None and self._current_holder.initialized()
-
     def current_task(self) -> Optional[Task]:
         if self._current_holder is None:  # worker is not yet initialized
             return None
@@ -337,7 +360,10 @@ class VanillaProcessorManager(ProcessorManager):
     def num_suspended_processors(self) -> int:
         return len(self._suspended_holders_by_task_id)
 
-    def __start_new_processor(self):
+    def __start_new_processor(self, release_lock_when_initialized: bool):
+        self._release_lock_when_initialized = release_lock_when_initialized
+        self._current_processor_initialized.clear()
+
         object_storage_address = self._heartbeat_manager.get_object_storage_address()
 
         self._current_holder = ProcessorHolder(
@@ -372,11 +398,11 @@ class VanillaProcessorManager(ProcessorManager):
 
         logger.info(f"{self._identity!r}: stop Processor[{processor_pid}], reason: {reason}")
 
-    def __restart_current_processor(self, reason: str):
+    def __restart_current_processor(self, reason: str, release_lock_when_initialized: bool):
         assert self._current_holder is not None
 
         self.__kill_processor(reason, self._current_holder)
-        self.__start_new_processor()
+        self.__start_new_processor(release_lock_when_initialized)
 
     def __kill_all_processors(self, reason: str):
         if self._current_holder is not None:
