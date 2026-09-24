@@ -44,6 +44,9 @@ DEFAULT_WORKER_TIMEOUT_SECONDS = 60
 # tasks for this client
 DEFAULT_CLIENT_TIMEOUT_SECONDS = 60
 
+# total time disconnect() waits for cancel confirms; a cancel that is never answered must not block the client
+DEFAULT_CLIENT_DISCONNECT_CANCEL_TIMEOUT_SECONDS = 10
+
 # if didn't receive heartbeat for following seconds, then scheduler will treat worker manager as dead and disconnect it
 DEFAULT_WORKER_MANAGER_TIMEOUT_SECONDS = 10
 
@@ -57,6 +60,10 @@ DEFAULT_LOAD_BALANCE_SECONDS = 1
 # when load balance advice happened repeatedly and always be the same, we issue load balance request when exact repeated
 # times happened
 DEFAULT_LOAD_BALANCE_TRIGGER_TIMES = 2
+
+# how many times the scheduler reruns a task whose processor died (an OOM kill, a crash, a pod going away) before it
+# fails the task to the client with the ProcessorDiedError; 0 fails it on the first death
+DEFAULT_PROCESSOR_DEATH_RETRIES = 3
 
 # number of tasks can be queued to each worker on scheduler side
 DEFAULT_PER_WORKER_QUEUE_SIZE = 1000

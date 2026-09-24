@@ -67,7 +67,9 @@ DispatchTargetStates = Literal[TaskState.inactive, TaskState.running]
 HasCapacityTargetStates = Literal[TaskState.running]
 TaskCancelTargetStates = Literal[TaskState.canceled, TaskState.canceling, TaskState.canceledNotFound]
 BalanceCancelTargetStates = Literal[TaskState.balanceCanceling]
-TaskResultTargetStates = Literal[TaskState.success, TaskState.failed, TaskState.failedWorkerDied]
+TaskResultTargetStates = Literal[
+    TaskState.success, TaskState.failed, TaskState.failedWorkerDied, TaskState.inactive, TaskState.running
+]
 CancelConfirmCanceledTargetStates = Literal[TaskState.canceled, TaskState.inactive, TaskState.running]
 CancelConfirmFailedTargetStates = Literal[TaskState.running]
 CancelConfirmNotFoundTargetStates = Literal[TaskState.canceledNotFound, TaskState.inactive, TaskState.running]
@@ -110,6 +112,8 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         self._graph_controller: Optional[GraphTaskController] = None
 
         self._task_id_to_task: Dict[TaskID, Task] = dict()
+        # how many times each task has been run again after its processor died, bounded by processor_death_retries
+        self._task_id_to_processor_death_retries: Dict[TaskID, int] = dict()
         # Live tasks naming each object, counted as tasks arrive and leave: a status report reads it per object.
         self._object_task_counts: Dict[ObjectID, int] = dict()
         self._task_state_manager: TaskStateManager = TaskStateManager(debug=True)
@@ -521,7 +525,14 @@ class VanillaTaskController(TaskController, Looper, Reporter):
             case TaskState.running | TaskState.balanceCanceling:
                 target = task_result_target(TaskResultType(event.task_result.resultType.value))
                 if target == TaskState.failedWorkerDied:
-                    logger.warning(f"{event.task_id!r}: reporting failedWorkerDied to the client")
+                    retries = self._task_id_to_processor_death_retries.get(event.task_id, 0)
+                    if retries < self._config_controller.get_config("processor_death_retries"):
+                        return await self.__run_again_after_processor_death(event, retries + 1)
+
+                    logger.warning(
+                        f"{event.task_id!r}: processor died after {retries} retries, reporting it to the client"
+                    )
+
                 await self.__send_task_result_to_client(event.task_result)
                 return target
             case (
@@ -644,6 +655,20 @@ class VanillaTaskController(TaskController, Looper, Reporter):
             case _:
                 assert_never(source)
 
+    async def __run_again_after_processor_death(self, event: TaskResultReceived, retry: int) -> DispatchTargetStates:
+        """Release the worker whose processor died under the task, drop the error it stored, and place it again."""
+
+        logger.warning(f"{event.task_id!r}: processor died on {event.worker_id!r}, running it again (retry {retry})")
+        self._task_id_to_processor_death_retries[event.task_id] = retry
+
+        task = self._task_id_to_task[event.task_id]
+        self._object_controller.on_del_objects(
+            task.source, {ObjectID(object_id) for object_id in event.task_result.results}
+        )
+
+        await self._worker_controller.on_task_done(event.task_id)
+        return await self.__acquire_and_dispatch(event.task_id)
+
     async def __acquire_and_dispatch(self, task_id: TaskID) -> DispatchTargetStates:
         """Look for a worker for a task that has none, and send the task to it if one is free."""
 
@@ -745,6 +770,8 @@ class VanillaTaskController(TaskController, Looper, Reporter):
             self._object_task_counts[object_id] = self._object_task_counts.get(object_id, 0) + 1
 
     def __release_task(self, task_id: TaskID) -> None:
+        self._task_id_to_processor_death_retries.pop(task_id, None)
+
         task = self._task_id_to_task.pop(task_id, None)
         if task is None:
             return
