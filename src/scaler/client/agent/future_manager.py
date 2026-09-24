@@ -10,7 +10,6 @@ from scaler.client.agent.mixins import FutureManager
 from scaler.client.future import ScalerFuture
 from scaler.client.serializer.mixins import Serializer
 from scaler.protocol.capnp import TaskCancelConfirm, TaskCancelConfirmType, TaskResult, TaskResultType
-from scaler.utility.exceptions import WorkerDiedError
 from scaler.utility.identifiers import ObjectID, TaskID
 from scaler.utility.metadata.profile_result import retrieve_profiling_result_from_task_result
 
@@ -98,12 +97,8 @@ class ClientFutureManager(FutureManager):
         profile_result = retrieve_profiling_result_from_task_result(result)
 
         match result_type:
-            case TaskResultType.failedWorkerDied:
-                future.set_exception(
-                    WorkerDiedError(f"worker died when processing task: {task_id.hex()}"), profile_result
-                )
-
-            case TaskResultType.success | TaskResultType.failed:
+            case TaskResultType.success | TaskResultType.failed | TaskResultType.failedWorkerDied:
+                # failedWorkerDied carries the ProcessorDiedError the worker stored, which names the exit code
                 future.set_result_ready(self.__get_result_object_id(result), result_type, profile_result)
 
             case _:
