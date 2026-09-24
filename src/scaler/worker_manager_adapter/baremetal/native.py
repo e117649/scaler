@@ -132,6 +132,7 @@ class NativeWorkerProvisioner(DeclarativeWorkerProvisioner):
         await self._capacity_coordinator.set_desired_unit_count(task_concurrency)
 
     def active_unit_count(self) -> int:
+        self.__forget_exited_workers()
         return len(self._workers)
 
     async def start_units(self, count: int) -> None:
@@ -142,6 +143,7 @@ class NativeWorkerProvisioner(DeclarativeWorkerProvisioner):
             logger.info(f"Started native worker {worker.identity!r}")
 
     async def stop_units(self, count: int) -> None:
+        self.__forget_exited_workers()
         to_stop = self._workers[:count]
         if len(to_stop) < count:
             logger.warning(f"Requested to stop {count} worker(s) but only {len(to_stop)} available.")
@@ -156,6 +158,15 @@ class NativeWorkerProvisioner(DeclarativeWorkerProvisioner):
                 os.kill(worker.pid, signal.SIGINT)
             self._workers.pop(0)
             logger.info(f"Stopped native worker {worker.identity!r}")
+
+    def __forget_exited_workers(self) -> None:
+        """Drop workers that exited on their own: counted as capacity, they would starve the tasks waiting for it."""
+        for worker in [worker for worker in self._workers if not worker.is_alive()]:
+            logger.warning(
+                f"native worker {worker.identity!r} exited (exitcode={describe_exitcode(worker.exitcode)}), "
+                f"no longer counted"
+            )
+            self._workers.remove(worker)
 
     async def terminate(self) -> None:
         self._capacity_coordinator.cancel()
