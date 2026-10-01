@@ -6,6 +6,7 @@ import logging
 import multiprocessing
 import multiprocessing.connection
 import os
+import pathlib
 import signal
 import sys
 import time
@@ -56,10 +57,14 @@ class NativeWorkerSupervisor:
     """
 
     def __init__(
-        self, create_worker: Callable[[EventType, Synchronized], Worker], drain_timeout_seconds: float
+        self,
+        create_worker: Callable[[EventType, Synchronized], Worker],
+        drain_timeout_seconds: float,
+        busy_file: Optional[str] = None,
     ) -> None:
         self._create_worker = create_worker
         self._drain_timeout_seconds = drain_timeout_seconds
+        self._busy_file = busy_file
 
         self._target = 0
         self._workers: List[_SupervisedWorker] = []
@@ -102,6 +107,18 @@ class NativeWorkerSupervisor:
         self.__enforce_deadlines(now)
         if not self._shutting_down:
             self.__reconcile(now)
+        self.__mark_busy()
+
+    def __mark_busy(self) -> None:
+        if self._busy_file is None:
+            return
+
+        # A draining worker's task counts: the pod is not idle until it finishes.
+        busy = any(supervised.processing_tasks.value > 0 for supervised in self._workers)
+        if busy:
+            pathlib.Path(self._busy_file).touch()
+        else:
+            pathlib.Path(self._busy_file).unlink(missing_ok=True)
 
     def __serving(self) -> List[_SupervisedWorker]:
         return [supervised for supervised in self._workers if supervised.drain_deadline is None]
@@ -229,7 +246,7 @@ class NativeWorkerProvisioner(DeclarativeWorkerProvisioner):
             raise ValueError(f"worker_type is not set and mode is unrecognised: {config.mode!r}")
 
         self._supervisor = NativeWorkerSupervisor(
-            self._create_worker, config.worker_manager_config.drain_timeout_seconds
+            self._create_worker, config.worker_manager_config.drain_timeout_seconds, config.busy_file
         )
         self._capacity_coordinator = CapacityCoordinator(
             start_units=self.start_units,

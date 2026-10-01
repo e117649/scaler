@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from typing import Any, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,6 +19,7 @@ def _make_provisioner(max_task_concurrency: int = -1) -> NativeWorkerProvisioner
     config.worker_manager_config.scale_down_cooldown_seconds = 0
     config.worker_manager_config.drain_timeout_seconds = DRAIN_TIMEOUT_SECONDS
     config.worker_type = "NAT"
+    config.busy_file = None
     return NativeWorkerProvisioner(config)
 
 
@@ -186,6 +189,22 @@ class TestNativeWorkerSupervisor(unittest.TestCase):
         self.supervisor.routine()
         self.assertEqual(len(self.workers), 1)
         self.assertTrue(self.supervisor.is_done())
+
+    def test_busy_file_follows_the_running_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            busy_file = os.path.join(directory, "busy")
+            supervisor = NativeWorkerSupervisor(self._create_worker, DRAIN_TIMEOUT_SECONDS, busy_file)
+            supervisor.set_target(2)
+            supervisor.routine()
+            self.assertFalse(os.path.exists(busy_file))
+
+            self.workers[1].processing_tasks.value = 1
+            supervisor.routine()
+            self.assertTrue(os.path.exists(busy_file))
+
+            self.workers[1].processing_tasks.value = 0
+            supervisor.routine()
+            self.assertFalse(os.path.exists(busy_file))
 
 
 class TestNativeWorkerProvisionerConcurrencyConversion(unittest.IsolatedAsyncioTestCase):

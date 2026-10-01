@@ -38,6 +38,16 @@ class NativeWorkerManagerConfig(ConfigClass):
         metadata=dict(help="worker type prefix used in worker IDs; defaults to 'FIX' or 'NAT' based on mode"),
     )
 
+    busy_file: Optional[str] = dataclasses.field(
+        default=None,
+        metadata=dict(
+            help=(
+                "path of a file that exists while any worker runs a task. As a Kubernetes readinessProbe "
+                "(test -e PATH), it makes an idle pod not ready, and a Deployment scale-down removes those first"
+            )
+        ),
+    )
+
     @classmethod
     def configure_parser(cls, parser: argparse.ArgumentParser) -> None:
         super().configure_parser(parser)
