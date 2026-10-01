@@ -28,6 +28,9 @@ from scaler.worker_manager.proxy.mixins import ExecutionBackend
 
 logger = logging.getLogger(__name__)
 
+# how long a draining proxy worker waits before it looks at its queue again
+DRAINING_IDLE_SECONDS = 1
+
 
 class TaskManager(Looper, TaskManagerMixin):
     def __init__(
@@ -53,6 +56,8 @@ class TaskManager(Looper, TaskManagerMixin):
         self._acquiring_task_ids: Set[TaskID] = set()
         self._processing_task_ids: Set[TaskID] = set()
         self._canceled_task_ids: Set[TaskID] = set()
+
+        self._draining = False
 
         self._connector_external: Optional[AsyncConnector] = None
         self._connector_storage: Optional[AsyncObjectStorageConnector] = None
@@ -153,6 +158,15 @@ class TaskManager(Looper, TaskManagerMixin):
     def can_accept_task(self) -> bool:
         return not self._executor_semaphore.locked()
 
+    def drain(self) -> None:
+        self._draining = True
+
+    def is_draining(self) -> bool:
+        return self._draining
+
+    def get_processing_size(self) -> int:
+        return len(self._processing_task_ids)
+
     async def resolve_tasks(self) -> None:
         if not self._task_id_to_future:
             await asyncio.sleep(self._idle_sleep_seconds)
@@ -217,6 +231,11 @@ class TaskManager(Looper, TaskManagerMixin):
         pass
 
     async def process_task(self) -> None:
+        if self._draining:
+            # A draining worker submits no new job: the scheduler takes the queued tasks back.
+            await asyncio.sleep(DRAINING_IDLE_SECONDS)
+            return
+
         await self._executor_semaphore.acquire()
 
         _, task_id = await self._queued_task_id_queue.get()

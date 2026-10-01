@@ -132,6 +132,7 @@ class WorkerStatus(CapnpStruct):
     hostname: str
     netSentBytes: int
     netRecvBytes: int
+    draining: bool
 
 class WorkerManagerStatus(CapnpStruct):
     workers: Any
@@ -239,6 +240,7 @@ class WorkerHeartbeat(BaseMessage):
     hostname: str
     netSentBytes: int
     netRecvBytes: int
+    draining: bool
 
 class WorkerHeartbeatEcho(BaseMessage):
     objectStorageAddress: ObjectStorageAddress

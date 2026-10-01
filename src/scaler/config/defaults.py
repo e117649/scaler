@@ -101,6 +101,9 @@ DEFAULT_HARD_PROCESSOR_SUSPEND = False
 # connection that is wedged rather than closed would otherwise hang teardown indefinitely.
 WORKER_EXIT_NOTIFICATION_TIMEOUT_SECONDS = 5
 
+# how often a worker checks for a drain request from its manager, and whether its last running task finished
+WORKER_DRAIN_CHECK_INTERVAL_SECONDS = 1
+
 # =======================
 # LOGGING SPECIFIC OPTIONS
 

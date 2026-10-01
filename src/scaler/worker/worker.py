@@ -4,10 +4,16 @@ import multiprocessing
 import pathlib
 import sys
 import uuid
+from multiprocessing.sharedctypes import Synchronized
+from multiprocessing.synchronize import Event as EventType
 from typing import Callable, Dict, List, Optional, Tuple
 
 from scaler.config.common.security import SecurityConfig
-from scaler.config.defaults import PROFILING_INTERVAL_SECONDS, WORKER_EXIT_NOTIFICATION_TIMEOUT_SECONDS
+from scaler.config.defaults import (
+    PROFILING_INTERVAL_SECONDS,
+    WORKER_DRAIN_CHECK_INTERVAL_SECONDS,
+    WORKER_EXIT_NOTIFICATION_TIMEOUT_SECONDS,
+)
 from scaler.config.types.address import AddressConfig, SocketType
 from scaler.io import ymq
 from scaler.io.mixins import (
@@ -71,7 +77,11 @@ class Worker(multiprocessing.get_context("spawn").Process):  # type: ignore
         worker_manager_id: bytes,
         deterministic_worker_ids: bool = False,
         security_config: Optional[SecurityConfig] = None,
+        drain_request: Optional[EventType] = None,
+        processing_tasks: Optional[Synchronized] = None,
     ):
+        """`drain_request` and `processing_tasks` are the local link to a worker manager that supervises this process:
+        once the event is set the worker drains, and the counter mirrors the tasks that hold a processor."""
         super().__init__(name="Agent")
 
         self._event_loop = event_loop
@@ -102,6 +112,8 @@ class Worker(multiprocessing.get_context("spawn").Process):  # type: ignore
         self._logging_paths = logging_paths
         self._logging_level = logging_level
         self._worker_manager_id = worker_manager_id
+        self._drain_request = drain_request
+        self._processing_tasks = processing_tasks
 
         self._backend: Optional[NetworkBackend] = None
         self._connector_external: Optional[AsyncConnector] = None
@@ -319,7 +331,26 @@ class Worker(multiprocessing.get_context("spawn").Process):  # type: ignore
             create_async_loop_routine(self._timeout_manager.routine, 1),
             create_async_loop_routine(self._task_manager.routine, 0),
             create_async_loop_routine(self._profiling_manager.routine, PROFILING_INTERVAL_SECONDS),
+            create_async_loop_routine(self.__drain_routine, WORKER_DRAIN_CHECK_INTERVAL_SECONDS),
         )
+
+    async def __drain_routine(self) -> None:
+        """Start a drain once the manager asks for one, and quit once no task holds a processor.
+
+        A draining worker reports it in its heartbeat, so the scheduler stops sending it work and takes back its queued
+        tasks. Any queued task the scheduler did not take back is rerouted when the exit notification arrives.
+        """
+        processing_size = self._task_manager.get_processing_size()
+        if self._processing_tasks is not None:
+            self._processing_tasks.value = processing_size
+
+        if self._drain_request is not None and self._drain_request.is_set() and not self._task_manager.is_draining():
+            logger.info(f"{self.identity!r}: draining: {processing_size} task(s) to finish")
+            self._task_manager.drain()
+
+        if self._task_manager.is_draining() and processing_size == 0:
+            logger.info(f"{self.identity!r}: drained, quitting")
+            self._task.cancel()
 
     async def __teardown(self) -> None:
         # Guarded with `is not None` throughout: this runs even when __initialize failed partway

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Dict, Optional, Set
 
 from scaler.io.mixins import AsyncConnector
@@ -28,6 +29,9 @@ class VanillaTaskManager(Looper, TaskManager):
         self._queued_task_ids = AsyncPriorityQueue()
 
         self._processing_task_ids: Set[TaskID] = set()  # Tasks associated with a processor, including suspended tasks
+
+        self._draining = False
+        self._queue_changed = asyncio.Event()  # a draining worker waits on it for a suspended task to resume
 
         self._connector_external: Optional[AsyncConnector] = None
         self._processor_manager: Optional[ProcessorManager] = None
@@ -72,6 +76,7 @@ class VanillaTaskManager(Looper, TaskManager):
             assert task_cancel.taskId in self._queued_task_id_to_task
             self._queued_task_ids.remove(task_cancel.taskId)
             _ = self._queued_task_id_to_task.pop(task_cancel.taskId)
+            self._queue_changed.set()
 
         await self._connector_external.send(
             TaskCancelConfirm(taskId=task_cancel.taskId, cancelConfirmType=TaskCancelConfirmType.canceled),
@@ -94,10 +99,27 @@ class VanillaTaskManager(Looper, TaskManager):
     def get_queued_size(self):
         return self._queued_task_ids.qsize()
 
+    def drain(self) -> None:
+        self._draining = True
+        self._queue_changed.set()
+
+    def is_draining(self) -> bool:
+        return self._draining
+
+    def get_processing_size(self) -> int:
+        return len(self._processing_task_ids)
+
     async def __processing_task(self):
         await self._processor_manager.wait_until_can_accept_task()
 
-        _, task_id = await self._queued_task_ids.get()
+        queue_priority, task_id = await self._queued_task_ids.get()
+        if self._draining and task_id not in self._processing_task_ids:
+            # A draining worker only resumes its suspended tasks: the scheduler takes the queued ones back.
+            self._queued_task_ids.put_nowait((queue_priority, task_id))
+            self._queue_changed.clear()
+            await self._queue_changed.wait()
+            return
+
         task = self._queued_task_id_to_task.pop(task_id)
 
         if task_id not in self._processing_task_ids:
@@ -142,6 +164,7 @@ class VanillaTaskManager(Looper, TaskManager):
 
         self._queued_task_ids.put_nowait((queue_priority, task.taskId))
         self._queued_task_id_to_task[task.taskId] = task
+        self._queue_changed.set()
 
     @staticmethod
     def __get_task_priority(task: Task) -> int:
