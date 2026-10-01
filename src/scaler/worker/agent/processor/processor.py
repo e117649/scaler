@@ -15,6 +15,7 @@ import psutil
 import tblib.pickling_support
 
 from scaler.config.common.security import SecurityConfig
+from scaler.config.defaults import PROCESSOR_AGENT_CHECK_INTERVAL_SECONDS
 from scaler.config.types.address import AddressConfig
 from scaler.io import ymq
 from scaler.io.mixins import ConnectorRemoteType, NetworkBackend, SyncConnector, SyncObjectStorageConnector
@@ -160,6 +161,7 @@ class Processor(multiprocessing.get_context("spawn").Process):  # type: ignore
         tblib.pickling_support.install()
 
         lower_processor_priority()
+        threading.Thread(target=self.__quit_when_agent_is_gone, name="ProcessorAgentWatch", daemon=True).start()
 
         self._backend = get_network_backend_from_env()
         assert self._backend is not None
@@ -189,6 +191,24 @@ class Processor(multiprocessing.get_context("spawn").Process):  # type: ignore
                 raise RuntimeError(
                     f"Processor[{self.pid}] initialization failed due to preload error: {self._preload}"
                 ) from e
+
+    @staticmethod
+    def __quit_when_agent_is_gone() -> None:
+        """Exit once the agent that started this processor is gone, instead of running its task to the end."""
+        agent = psutil.Process().parent()
+        if agent is None:
+            return
+        agent_create_time = agent.create_time()
+
+        while True:
+            time.sleep(PROCESSOR_AGENT_CHECK_INTERVAL_SECONDS)
+            try:
+                alive = psutil.Process(agent.pid).create_time() == agent_create_time
+            except psutil.NoSuchProcess:
+                alive = False
+            if not alive:
+                logger.warning(f"Processor[{os.getpid()}]: agent pid={agent.pid} is gone, quitting")
+                os._exit(1)
 
     def __register_signals(self):
         if sys.platform != "win32":

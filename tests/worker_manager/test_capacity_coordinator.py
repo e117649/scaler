@@ -76,12 +76,18 @@ class TestCapacityCoordinator(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)  # second reconcile fires
         self.assertEqual(start_mock.call_count, 2)
 
-    async def test_set_desired_unit_count_noop_when_count_unchanged(self) -> None:
-        loop, _, _ = _make_coordinator(units=[])
-        with unittest.mock.patch.object(loop, "_reconcile", new_callable=AsyncMock) as reconcile_mock:
-            await loop.set_desired_unit_count(0)  # already 0 - no change
-            await asyncio.sleep(0)
-        reconcile_mock.assert_not_called()
+    async def test_unchanged_count_replaces_a_unit_that_died(self) -> None:
+        """The scheduler repeats the same count every heartbeat, and that is what replaces a lost unit."""
+        units = [1, 2, 3]
+        loop, start_mock, _ = _make_coordinator(units=units)
+        await loop.set_desired_unit_count(3)
+        await asyncio.sleep(0)
+        start_mock.assert_not_called()
+
+        units.pop()  # a unit dies on its own
+        await loop.set_desired_unit_count(3)
+        await asyncio.sleep(0)
+        start_mock.assert_called_once_with(1)
 
     async def test_cancel_stops_reconcile(self) -> None:
         loop, _, _ = _make_coordinator(units=[])

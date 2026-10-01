@@ -1,6 +1,10 @@
 import signal
 from typing import Optional
 
+# A worker exits with this when it gives up on a scheduler it never reached or stopped hearing from. Restarting it
+# cannot help, so a manager lets it go instead of replacing it.
+WORKER_EXIT_CODE_SCHEDULER_UNREACHABLE = 3
+
 
 def describe_exitcode(exitcode: Optional[int]) -> str:
     """Render a process exit code, naming the signal for signal-terminated processes.

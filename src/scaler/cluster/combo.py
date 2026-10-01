@@ -1,5 +1,7 @@
 import logging
 import multiprocessing
+import os
+import signal
 import sys
 from typing import Dict, List, Optional, Tuple
 
@@ -186,9 +188,8 @@ class SchedulerClusterCombo:
 
         logger.info(f"{self.__get_prefix()} shutdown")
         if self._worker_manager_process.is_alive():
-            # On POSIX, multiprocessing.Process.terminate() sends SIGTERM and the worker manager's
-            # signal handler iterates self._workers and terminates each child worker, which in turn
-            # cleanly tears down their processors. On Windows terminate() is TerminateProcess --
+            # On POSIX, SIGINT makes the worker manager stop each child worker at once (SIGTERM would drain
+            # them), which in turn cleanly tears down their processors. On Windows terminate() is TerminateProcess --
             # the handler never runs and the worker / processor children become orphaned, kept
             # alive (and busy retrying YMQ connections) until they happen to notice the scheduler
             # has gone away. That orphaned-but-alive period is what added ~52s teardown latency
@@ -201,7 +202,10 @@ class SchedulerClusterCombo:
                 except psutil.NoSuchProcess:
                     descendants = []
 
-            self._worker_manager_process.terminate()
+            if sys.platform == "win32":
+                self._worker_manager_process.terminate()
+            else:
+                os.kill(self._worker_manager_process.pid, signal.SIGINT)
 
             for proc in descendants:
                 try:

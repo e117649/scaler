@@ -38,6 +38,7 @@ from scaler.protocol.capnp import (
 )
 from scaler.utility.event_loop import create_async_loop_routine, register_event_loop, run_task_forever
 from scaler.utility.exceptions import ClientShutdownException, ObjectStorageException
+from scaler.utility.exitcode import WORKER_EXIT_CODE_SCHEDULER_UNREACHABLE
 from scaler.utility.identifiers import ProcessorID, WorkerID
 from scaler.utility.process_bootstrap import bootstrap_process
 from scaler.utility.signal_handler import install_async_shutdown_handler
@@ -164,7 +165,7 @@ class Worker(multiprocessing.get_context("spawn").Process):  # type: ignore
                     # We exhausted our connect retries without ever reaching the scheduler: an
                     # unreachable dependency at startup, worth a nonzero exit.
                     logger.warning(f"{self.identity!r}: never connected to scheduler, retries exhausted: {e}")
-                    exit_code = 1
+                    exit_code = WORKER_EXIT_CODE_SCHEDULER_UNREACHABLE
             elif e.code == ymq.ErrorCode.SocketStopRequested:
                 # A YMQ socket (e.g. the internal binder) was shut down via `disconnect`/teardown
                 # while a send or recv driven by one of the loops above was still in flight. Like
@@ -181,7 +182,7 @@ class Worker(multiprocessing.get_context("spawn").Process):  # type: ignore
             # within death_timeout_seconds), not that anyone asked it to stop: an anomaly worth a
             # nonzero exit.
             logger.warning(f"{self.identity!r}: {str(e)}")
-            exit_code = 1
+            exit_code = WORKER_EXIT_CODE_SCHEDULER_UNREACHABLE
         except Exception as e:
             logger.exception(f"{self.identity!r}: failed with unhandled exception:\n{e}")
             exit_code = 1

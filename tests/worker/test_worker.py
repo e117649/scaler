@@ -19,6 +19,7 @@ from scaler.config.types.address import AddressConfig
 from scaler.io import ymq
 from scaler.io.ymq import ConnectorSocketClosedByRemoteEndError, SocketStopRequestedError, SysCallError
 from scaler.protocol.capnp import WorkerDisconnectNotification
+from scaler.utility.exitcode import WORKER_EXIT_CODE_SCHEDULER_UNREACHABLE
 from scaler.worker.worker import Worker
 
 
@@ -160,7 +161,11 @@ class WorkerTeardownYMQErrorTest(unittest.IsolatedAsyncioTestCase):
             exit_code = await worker._run()
         await self._drain_pending_tasks()
 
-        self.assertEqual(exit_code, 1, "never having connected to the scheduler should produce a nonzero exit code")
+        self.assertEqual(
+            exit_code,
+            WORKER_EXIT_CODE_SCHEDULER_UNREACHABLE,
+            "never having connected to the scheduler should produce the scheduler-unreachable exit code",
+        )
         never_connected = [c for c in mock_logger.warning.call_args_list if "never connected to scheduler" in str(c)]
         self.assertTrue(never_connected, "the never-connected case was not logged distinctly")
 
