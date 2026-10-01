@@ -1,7 +1,9 @@
+import dataclasses
 import logging
 import time
 from typing import Dict, List, Optional, Set, Tuple
 
+from scaler.config.defaults import WORKER_PRUNE_SILENCE_SECONDS
 from scaler.io.mixins import AsyncBinder, AsyncPublisher
 from scaler.protocol.capnp import (
     ClientDisconnect,
@@ -30,6 +32,14 @@ UINT8_MAX = 2**8 - 1
 UINT16_MAX = 2**16 - 1
 
 
+@dataclasses.dataclass(frozen=True)
+class _Excess:
+    """A manager runs fewer active workers than the scheduler sees, since `since`."""
+
+    since: float
+    active_workers: int
+
+
 class VanillaWorkerController(WorkerController, Looper, Reporter):
     def __init__(self, config_controller: VanillaConfigController, policy_controller: PolicyController) -> None:
         self._config_controller = config_controller
@@ -41,6 +51,7 @@ class VanillaWorkerController(WorkerController, Looper, Reporter):
         self._worker_alive_since: Dict[WorkerID, Tuple[float, WorkerHeartbeat]] = dict()
         self._worker_to_manager: Dict[WorkerID, bytes] = dict()
         self._manager_to_workers: Dict[bytes, Set[WorkerID]] = dict()
+        self._manager_excess: Dict[bytes, _Excess] = dict()
         self._policy_controller = policy_controller
 
     def register(self, binder: AsyncBinder, binder_monitor: AsyncPublisher, task_controller: TaskController) -> None:
@@ -111,6 +122,46 @@ class VanillaWorkerController(WorkerController, Looper, Reporter):
         # The notification always refers to its sender, whose identity comes from the binder and
         # cannot be spoofed by the payload.
         await self.__disconnect_worker(worker_id, reason="graceful notification")
+
+    async def on_manager_active_workers(self, manager_id: bytes, active_workers: int) -> None:
+        """Drop the workers of this manager that went silent beyond the count it reports.
+
+        Once `active_workers` of its serving workers have been heard from since the count stopped matching, the
+        rest are the ones that are gone. A draining worker is leaving on its own and is never dropped here.
+        """
+        now = time.time()
+        serving = [
+            worker_id
+            for worker_id in self._manager_to_workers.get(manager_id, set())
+            if not self._worker_alive_since[worker_id][1].draining
+        ]
+        if len(serving) <= active_workers:
+            self._manager_excess.pop(manager_id, None)
+            return
+
+        excess = self._manager_excess.get(manager_id)
+        if excess is None or excess.active_workers != active_workers:
+            self._manager_excess[manager_id] = _Excess(since=now, active_workers=active_workers)
+            return
+
+        heard = [worker_id for worker_id in serving if self._worker_alive_since[worker_id][0] > excess.since]
+        if len(heard) < active_workers:
+            return
+
+        silent = sorted(
+            (
+                worker_id
+                for worker_id in serving
+                if now - self._worker_alive_since[worker_id][0] > WORKER_PRUNE_SILENCE_SECONDS
+            ),
+            key=lambda worker_id: self._worker_alive_since[worker_id][0],
+        )
+        for worker_id in silent[: len(serving) - active_workers]:
+            elapsed = now - self._worker_alive_since[worker_id][0]
+            reason = (
+                f"no heartbeat for {elapsed:.0f}s, beyond the {active_workers} active worker(s) its manager reports"
+            )
+            await self.__disconnect_worker(worker_id, reason=reason)
 
     async def routine(self) -> None:
         await self.__clean_workers()

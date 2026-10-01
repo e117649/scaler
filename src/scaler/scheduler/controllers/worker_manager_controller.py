@@ -2,7 +2,7 @@ import logging
 import time
 from typing import Dict, List, Optional, Tuple
 
-from scaler.config.defaults import DEFAULT_WORKER_MANAGER_TIMEOUT_SECONDS
+from scaler.config.defaults import DEFAULT_WORKER_MANAGER_TIMEOUT_SECONDS, UNREPORTED_ACTIVE_WORKERS
 from scaler.io.mixins import AsyncBinder
 from scaler.protocol.capnp import (
     ScalingManagerStatus,
@@ -49,6 +49,7 @@ class WorkerManagerController(Looper, Reporter):
         self._worker_controller = worker_controller
 
     async def on_heartbeat(self, source: bytes, heartbeat: WorkerManagerHeartbeat):
+        active_workers = heartbeat.activeWorkers
         heartbeat.capabilities = capabilities_to_dict(heartbeat.capabilities)
         if source not in self._manager_alive_since:
             manager_id = heartbeat.workerManagerID
@@ -66,6 +67,9 @@ class WorkerManagerController(Looper, Reporter):
         self._manager_alive_since[source] = (time.time(), heartbeat)
 
         await self._binder.send(source, WorkerManagerHeartbeatEcho(), detached=True)
+
+        if active_workers != UNREPORTED_ACTIVE_WORKERS:
+            await self._worker_controller.on_manager_active_workers(heartbeat.workerManagerID, active_workers)
 
         information_snapshot = self._build_snapshot()
         managed_worker_ids = self._worker_controller.get_workers_by_manager_id(heartbeat.workerManagerID)

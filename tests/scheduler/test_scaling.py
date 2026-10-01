@@ -618,7 +618,7 @@ class TestPendingWorkersStatus(unittest.IsolatedAsyncioTestCase):
         source = b"mgr-src"
         manager_id = b"mgr-id"
         # Manager advertises only "cpu" capability.
-        heartbeat = WorkerManagerHeartbeat(maxTaskConcurrency=10, capabilities={"cpu": -1}, workerManagerID=manager_id)
+        heartbeat = _create_worker_manager_heartbeat(manager_id, max_task_concurrency=10, capabilities={"cpu": -1})
 
         # Generic (empty caps, wildcard) -> 2; gpu-only -> 4 (not servable); cpu-only -> 3 (servable).
         self.policy_controller.get_scaling_commands.return_value = [
@@ -663,9 +663,13 @@ def _create_mock_worker_heartbeat(capabilities: dict, queued_tasks: int = 0) -> 
 def _create_worker_manager_heartbeat(
     worker_manager_id: bytes, max_task_concurrency: int = 10, capabilities: Optional[Dict[str, int]] = None
 ) -> WorkerManagerHeartbeat:
-    return WorkerManagerHeartbeat(
-        maxTaskConcurrency=max_task_concurrency, capabilities=capabilities or {}, workerManagerID=worker_manager_id
+    sent = WorkerManagerHeartbeat(
+        maxTaskConcurrency=max_task_concurrency, capabilities=[], workerManagerID=worker_manager_id
     )
+    # decoded, as the scheduler receives it: a field the manager does not set reads its default
+    heartbeat = WorkerManagerHeartbeat.from_bytes(sent.to_bytes())
+    heartbeat.capabilities = capabilities or {}
+    return heartbeat
 
 
 def _run_native_worker_manager(

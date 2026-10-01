@@ -224,6 +224,11 @@ class WorkerController(Reporter):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    async def on_manager_active_workers(self, manager_id: bytes, active_workers: int):
+        """the manager runs `active_workers` workers that are not leaving: drop the silent ones beyond that count"""
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     def has_available_worker(self) -> bool:
         raise NotImplementedError()
 

@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from scaler.config.common.security import SecurityConfig
 from scaler.config.types.address import AddressConfig
@@ -30,7 +30,10 @@ class WorkerManagerRunner:
         io_threads: int = 1,
         workers_per_provisioner_unit: int = 1,
         security_config: Optional[SecurityConfig] = None,
+        active_workers: Optional[Callable[[], int]] = None,
     ) -> None:
+        """`active_workers` counts the workers this manager runs that are not leaving. With it, the scheduler drops the
+        workers beyond that count that went silent, instead of waiting out its worker timeout."""
         self._address = address
         self._name = name
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
@@ -41,6 +44,7 @@ class WorkerManagerRunner:
         self._io_threads = io_threads
         self._workers_per_provisioner_unit = workers_per_provisioner_unit
         self._security_config = security_config
+        self._active_workers = active_workers
 
         self._backend: Optional[NetworkBackend] = None
         self._connector_external: Optional[AsyncConnector] = None
@@ -79,14 +83,14 @@ class WorkerManagerRunner:
         await self._task
 
     async def _send_heartbeat(self) -> None:
-        await self._connector_external.send(
-            WorkerManagerHeartbeat(
-                maxTaskConcurrency=self._max_provisioner_units * self._workers_per_provisioner_unit,
-                capabilities=dict_to_capabilities(self._capabilities),
-                workerManagerID=self._worker_manager_id,
-            ),
-            detached=True,
+        heartbeat = WorkerManagerHeartbeat(
+            maxTaskConcurrency=self._max_provisioner_units * self._workers_per_provisioner_unit,
+            capabilities=dict_to_capabilities(self._capabilities),
+            workerManagerID=self._worker_manager_id,
         )
+        if self._active_workers is not None:
+            heartbeat.activeWorkers = self._active_workers()
+        await self._connector_external.send(heartbeat, detached=True)
 
     async def _get_loops(self) -> None:
         await self._initialize_network()

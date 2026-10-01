@@ -40,6 +40,13 @@ DEFAULT_MAX_NUMBER_OF_TASKS_WAITING = -1
 # tasks for this worker
 DEFAULT_WORKER_TIMEOUT_SECONDS = 60
 
+# a worker silent this long, beyond the count of active workers its manager reports, is dropped at once instead of
+# after worker_timeout_seconds. Several heartbeats long, so a live worker whose heartbeat is merely late is kept.
+WORKER_PRUNE_SILENCE_SECONDS = 10
+
+# what WorkerManagerHeartbeat.activeWorkers reads when the manager does not report it
+UNREPORTED_ACTIVE_WORKERS = 0xFFFFFFFF
+
 # if didn't receive heartbeat for following seconds, then scheduler will treat client as dead and cancel remaining
 # tasks for this client
 DEFAULT_CLIENT_TIMEOUT_SECONDS = 60

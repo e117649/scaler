@@ -362,5 +362,6 @@ class NativeWorkerManager:
             worker_provisioner=provisioner,
             io_threads=self._config.worker_config.io_threads,
             security_config=self._config.security,
+            active_workers=provisioner.active_unit_count,
         )
         runner.run()

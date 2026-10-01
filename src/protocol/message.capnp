@@ -99,6 +99,9 @@ struct WorkerManagerHeartbeat {
     maxTaskConcurrency @0 :UInt32;
     capabilities @1 :List(CommonType.TaskCapability);
     workerManagerID @2 :Data;
+    # Workers this manager runs that are not leaving. The scheduler drops the silent workers beyond this count
+    # instead of waiting out worker_timeout_seconds. The default means the manager does not say.
+    activeWorkers @3 :UInt32 = 0xffffffff;
 }
 
 struct WorkerManagerHeartbeatEcho {
