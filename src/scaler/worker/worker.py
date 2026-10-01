@@ -40,6 +40,7 @@ from scaler.utility.event_loop import create_async_loop_routine, register_event_
 from scaler.utility.exceptions import ClientShutdownException, ObjectStorageException
 from scaler.utility.exitcode import WORKER_EXIT_CODE_SCHEDULER_UNREACHABLE
 from scaler.utility.identifiers import ProcessorID, WorkerID
+from scaler.utility.oom_score import midway_to_max_oom_score_adj, raise_oom_score_adj
 from scaler.utility.process_bootstrap import bootstrap_process
 from scaler.utility.signal_handler import install_async_shutdown_handler
 from scaler.worker.agent.heartbeat_manager import VanillaHeartbeatManager
@@ -135,6 +136,8 @@ class Worker(multiprocessing.get_context("spawn").Process):  # type: ignore
         return self._ident
 
     def run(self) -> None:
+        raise_oom_score_adj(midway_to_max_oom_score_adj())
+
         self._loop = asyncio.new_event_loop()
         exit_code = run_task_forever(self._loop, self._run(), cleanup_callback=self._cleanup)
         if exit_code:

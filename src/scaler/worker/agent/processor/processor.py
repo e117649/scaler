@@ -35,6 +35,7 @@ from scaler.utility.exceptions import ObjectStorageException
 from scaler.utility.identifiers import ClientID, ObjectID, TaskID
 from scaler.utility.logging.utility import LogType, detect_log_type
 from scaler.utility.metadata.task_flags import retrieve_task_flags_from_task
+from scaler.utility.oom_score import OOM_SCORE_ADJ_MAX, raise_oom_score_adj
 from scaler.utility.process_bootstrap import bootstrap_process
 from scaler.utility.serialization import serialize_failure
 from scaler.worker.agent.processor.object_cache import ObjectCache
@@ -161,6 +162,8 @@ class Processor(multiprocessing.get_context("spawn").Process):  # type: ignore
         tblib.pickling_support.install()
 
         lower_processor_priority()
+        # user code is what exhausts memory, so the OOM killer takes a processor before its agent or manager
+        raise_oom_score_adj(OOM_SCORE_ADJ_MAX)
         threading.Thread(target=self.__quit_when_agent_is_gone, name="ProcessorAgentWatch", daemon=True).start()
 
         self._backend = get_network_backend_from_env()
