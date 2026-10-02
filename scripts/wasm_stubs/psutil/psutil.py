@@ -77,6 +77,9 @@ class Process:
     def memory_info(self) -> _MemoryInfo:
         return _MemoryInfo()
 
+    def nice(self, _value: Optional[int] = None) -> int:
+        return 0
+
     def status(self) -> str:
         return STATUS_RUNNING
 

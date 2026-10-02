@@ -22,7 +22,7 @@ inactive          WorkerDisconnected                     -> (rejected)
 inactive          WorkerDisconnected (no capacity)       -> (rejected)
 running           HasCapacity                            -> (rejected)
 running           TaskCancelRequested                    -> canceling
-running           TaskCancelRequested (worker gone)      -> canceledNotFound
+running           TaskCancelRequested (worker gone)      -> canceling
 running           BalanceCancelRequested                 -> balanceCanceling
 running           BalanceCancelRequested (worker gone)   -> (rejected)
 running           TaskResultReceived (success)           -> success

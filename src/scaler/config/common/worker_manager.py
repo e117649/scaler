@@ -55,6 +55,17 @@ class WorkerManagerConfig(ConfigClass):
         ),
     )
 
+    drain_timeout_seconds: int = dataclasses.field(
+        default=defaults.DEFAULT_WORKER_MANAGER_DRAIN_TIMEOUT_SECONDS,
+        metadata=dict(
+            short="-drt",
+            help=(
+                "seconds workers may finish their running tasks after the worker manager receives SIGTERM, before it "
+                "stops them. Keep it below the platform's grace period, e.g. Kubernetes terminationGracePeriodSeconds"
+            ),
+        ),
+    )
+
     @property
     def effective_worker_scheduler_address(self) -> AddressConfig:
         return self.worker_scheduler_address if self.worker_scheduler_address is not None else self.scheduler_address
@@ -66,3 +77,5 @@ class WorkerManagerConfig(ConfigClass):
             raise ValueError("max_task_concurrency must be -1 (no limit) or a non-negative integer.")
         if self.scale_down_cooldown_seconds < 0:
             raise ValueError("scale_down_cooldown_seconds must be a non-negative number.")
+        if self.drain_timeout_seconds < 0:
+            raise ValueError("drain_timeout_seconds must be a non-negative number.")

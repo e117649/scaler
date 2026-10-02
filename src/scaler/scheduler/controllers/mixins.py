@@ -224,6 +224,11 @@ class WorkerController(Reporter):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    async def on_manager_active_workers(self, manager_id: bytes, active_workers: int):
+        """the manager runs `active_workers` workers that are not leaving: drop the silent ones beyond that count"""
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     def has_available_worker(self) -> bool:
         raise NotImplementedError()
 
@@ -256,6 +261,12 @@ class PolicyController(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def remove_worker(self, worker: WorkerID) -> List[TaskID]:
         """remove worker to worker collection, and return list of task_ids of removed worker"""
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def drain_worker(self, worker: WorkerID) -> List[TaskID]:
+        """stop assigning and balancing tasks to worker, and return the task_ids it holds so the caller can take the
+        queued ones back"""
         raise NotImplementedError()
 
     @abc.abstractmethod

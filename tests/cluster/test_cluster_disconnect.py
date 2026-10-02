@@ -87,7 +87,11 @@ class TestClusterDisconnect(unittest.TestCase):
         client = Client(self.address)
         future_result = client.submit(noop_sleep, 5)
         time.sleep(2)
-        dying_process.terminate()
+        if sys.platform == "win32":
+            dying_process.terminate()
+        else:
+            # SIGINT stops the workers at once; SIGTERM would drain them and let the task finish.
+            os.kill(dying_process.pid, signal.SIGINT)
         dying_process.join()
 
         with self.assertRaises(CancelledError):

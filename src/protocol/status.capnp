@@ -74,6 +74,7 @@ struct WorkerStatus {
     hostname @12 :Text;          # machine this worker runs on, so the UI can group by host
     netSentBytes @13 :UInt64;    # host-wide network counters; identical for workers sharing a host,
     netRecvBytes @14 :UInt64;    # so the UI reads them once per hostname
+    draining @15 :Bool;          # starts no new task, and exits once its running tasks finish
 }
 
 struct WorkerManagerStatus {

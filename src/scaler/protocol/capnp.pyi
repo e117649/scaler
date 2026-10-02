@@ -132,6 +132,7 @@ class WorkerStatus(CapnpStruct):
     hostname: str
     netSentBytes: int
     netRecvBytes: int
+    draining: bool
 
 class WorkerManagerStatus(CapnpStruct):
     workers: Any
@@ -167,6 +168,7 @@ class Task(BaseMessage):
     funcObjectId: ScalerObjectID
     functionArgs: Any
     capabilities: Any
+    parentTaskId: bytes
 
     class Argument(CapnpStruct):
         type: Any
@@ -239,6 +241,7 @@ class WorkerHeartbeat(BaseMessage):
     hostname: str
     netSentBytes: int
     netRecvBytes: int
+    draining: bool
 
 class WorkerHeartbeatEcho(BaseMessage):
     objectStorageAddress: ObjectStorageAddress
@@ -247,6 +250,7 @@ class WorkerManagerHeartbeat(BaseMessage):
     maxTaskConcurrency: int
     capabilities: Any
     workerManagerID: bytes
+    activeWorkers: int
 
 class WorkerManagerHeartbeatEcho(BaseMessage): ...
 

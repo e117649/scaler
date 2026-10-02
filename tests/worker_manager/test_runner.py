@@ -3,6 +3,7 @@ import unittest
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
+from scaler.config.defaults import UNREPORTED_ACTIVE_WORKERS
 from scaler.protocol.capnp import (
     ClientDisconnect,
     ObjectInstruction,
@@ -11,6 +12,7 @@ from scaler.protocol.capnp import (
     TaskCancel,
     WorkerHeartbeatEcho,
     WorkerManagerCommand,
+    WorkerManagerHeartbeat,
 )
 from scaler.utility.exceptions import ClientShutdownException
 from scaler.utility.identifiers import ClientID, ObjectID, TaskID
@@ -200,3 +202,36 @@ def _make_object_instruction() -> ObjectInstruction:
             objectIds=(ObjectID.generate_object_id(client_id),), objectTypes=(), objectNames=()
         ),
     )
+
+
+class TestWorkerManagerHeartbeatActiveWorkers(unittest.IsolatedAsyncioTestCase):
+    """The heartbeat carries the manager's count of active workers only when the manager can tell."""
+
+    def _runner(self, active_workers=None) -> WorkerManagerRunner:
+        runner = WorkerManagerRunner(
+            address=MagicMock(),
+            name="test_runner",
+            heartbeat_interval_seconds=5,
+            capabilities={},
+            max_provisioner_units=4,
+            worker_manager_id=b"mgr",
+            worker_provisioner=MagicMock(spec=DeclarativeWorkerProvisioner),
+            active_workers=active_workers,
+        )
+        return runner
+
+    async def _sent_heartbeat(self, runner: WorkerManagerRunner) -> WorkerManagerHeartbeat:
+        send = AsyncMock()
+        runner._connector_external = MagicMock(send=send)
+        await runner._send_heartbeat()
+        assert send.await_args is not None
+        heartbeat = send.await_args.args[0]
+        return WorkerManagerHeartbeat.from_bytes(heartbeat.to_bytes())
+
+    async def test_reports_the_count_it_is_given(self) -> None:
+        heartbeat = await self._sent_heartbeat(self._runner(active_workers=lambda: 3))
+        self.assertEqual(heartbeat.activeWorkers, 3)
+
+    async def test_a_manager_that_cannot_tell_leaves_it_unreported(self) -> None:
+        heartbeat = await self._sent_heartbeat(self._runner())
+        self.assertEqual(heartbeat.activeWorkers, UNREPORTED_ACTIVE_WORKERS)

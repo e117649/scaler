@@ -1,6 +1,7 @@
 import asyncio
 import time
 import unittest
+import unittest.mock
 from unittest.mock import AsyncMock, MagicMock
 
 from scaler.io.ymq import ConnectorSocketClosedByRemoteEndError, ErrorCode
@@ -114,6 +115,7 @@ class TestWorkerControllerMassEviction(unittest.TestCase):
             funcObjectId=b"",
             functionArgs=[],
             capabilities={},
+            parentTaskId=b"",
         )
 
     def test_mass_eviction_is_handled_without_crashing(self):
@@ -171,3 +173,111 @@ class TestWorkerControllerMassEviction(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _heartbeat(draining: bool = False, manager_id: bytes = _MANAGER_ID) -> MagicMock:
+    heartbeat = MagicMock()
+    heartbeat.draining = draining
+    heartbeat.workerManagerID = manager_id
+    heartbeat.capabilities = []
+    heartbeat.queueSize = 10
+    return heartbeat
+
+
+def _make_worker_controller() -> tuple:
+    config_controller = MagicMock(spec=ConfigController)
+    policy_controller = MagicMock(spec=PolicyController)
+    policy_controller.add_worker.return_value = False
+    policy_controller.remove_worker.return_value = []
+    controller = VanillaWorkerController(config_controller, policy_controller)
+    task_controller = MagicMock(spec=TaskController)
+    controller.register(AsyncMock(), AsyncMock(), task_controller)
+    return controller, policy_controller, task_controller
+
+
+class TestVanillaWorkerControllerDrain(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        setup_logger()
+        logging_test_name(self)
+        self.controller, self.policy_controller, self.task_controller = _make_worker_controller()
+
+    async def test_first_draining_heartbeat_takes_the_tasks_back(self) -> None:
+        """The scheduler asks a draining worker for its tasks back once, through the balance-cancel path."""
+        self.policy_controller.drain_worker.return_value = [_TASK_ID]
+
+        await self.controller.on_heartbeat(_WORKER_ID, _heartbeat(draining=False))
+        self.policy_controller.drain_worker.assert_not_called()
+
+        await self.controller.on_heartbeat(_WORKER_ID, _heartbeat(draining=True))
+        await self.controller.on_heartbeat(_WORKER_ID, _heartbeat(draining=True))
+
+        self.policy_controller.drain_worker.assert_called_once_with(_WORKER_ID)
+        self.task_controller.on_task_balance_cancel.assert_awaited_once_with(_TASK_ID)
+
+
+class TestVanillaWorkerControllerPruning(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        setup_logger()
+        logging_test_name(self)
+        self.controller, self.policy_controller, self.task_controller = _make_worker_controller()
+        self.now = 1000.0
+
+    def _add_worker(self, name: bytes, last_heard: float, draining: bool = False) -> WorkerID:
+        worker_id = WorkerID(name)
+        self.controller._worker_alive_since[worker_id] = (last_heard, _heartbeat(draining=draining))
+        self.controller._worker_to_manager[worker_id] = _MANAGER_ID
+        self.controller._manager_to_workers.setdefault(_MANAGER_ID, set()).add(worker_id)
+        return worker_id
+
+    async def _report(self, active_workers: int, at: float) -> None:
+        with unittest.mock.patch("scaler.scheduler.controllers.worker_controller.time.time", return_value=at):
+            await self.controller.on_manager_active_workers(_MANAGER_ID, active_workers)
+
+    async def test_drops_the_silent_workers_beyond_the_reported_count(self) -> None:
+        """Once enough workers prove themselves alive, the silent excess goes without waiting out the timeout."""
+        dead = [self._add_worker(b"dead_%d" % index, last_heard=self.now - 1) for index in range(2)]
+        alive = [self._add_worker(b"alive_%d" % index, last_heard=self.now - 1) for index in range(2)]
+
+        await self._report(2, at=self.now)  # the excess starts here
+        for worker_id in alive:
+            self.controller._worker_alive_since[worker_id] = (self.now + 15, _heartbeat())
+        await self._report(2, at=self.now + 16)
+
+        for worker_id in dead:
+            self.assertNotIn(worker_id, self.controller._worker_alive_since)
+        for worker_id in alive:
+            self.assertIn(worker_id, self.controller._worker_alive_since)
+
+    async def test_waits_for_the_reported_count_of_workers_to_be_heard(self) -> None:
+        """A slow worker that has not been heard yet keeps everyone's place: nobody can tell it from a dead one."""
+        dead = self._add_worker(b"dead", last_heard=self.now - 1)
+        slow = self._add_worker(b"slow", last_heard=self.now - 1)
+        fast = self._add_worker(b"fast", last_heard=self.now - 1)
+
+        await self._report(2, at=self.now)
+        self.controller._worker_alive_since[fast] = (self.now + 15, _heartbeat())
+        await self._report(2, at=self.now + 16)
+
+        self.assertIn(dead, self.controller._worker_alive_since)
+        self.assertIn(slow, self.controller._worker_alive_since)
+
+    async def test_keeps_a_worker_heard_recently(self) -> None:
+        """A worker silent for less than WORKER_PRUNE_SILENCE_SECONDS is late, not gone."""
+        late = self._add_worker(b"late", last_heard=self.now - 1)
+        alive = self._add_worker(b"alive", last_heard=self.now - 1)
+
+        await self._report(1, at=self.now)
+        self.controller._worker_alive_since[alive] = (self.now + 2, _heartbeat())
+        await self._report(1, at=self.now + 3)
+
+        self.assertIn(late, self.controller._worker_alive_since)
+
+    async def test_never_drops_a_draining_worker(self) -> None:
+        """A draining worker is leaving on its own, after its running task."""
+        draining = self._add_worker(b"draining", last_heard=self.now - 30, draining=True)
+        self._add_worker(b"alive", last_heard=self.now + 15)
+
+        await self._report(0, at=self.now)
+        await self._report(0, at=self.now + 16)
+
+        self.assertIn(draining, self.controller._worker_alive_since)

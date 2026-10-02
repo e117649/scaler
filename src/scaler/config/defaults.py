@@ -40,6 +40,13 @@ DEFAULT_MAX_NUMBER_OF_TASKS_WAITING = -1
 # tasks for this worker
 DEFAULT_WORKER_TIMEOUT_SECONDS = 60
 
+# a worker silent this long, beyond the count of active workers its manager reports, is dropped at once instead of
+# after worker_timeout_seconds. Several heartbeats long, so a live worker whose heartbeat is merely late is kept.
+WORKER_PRUNE_SILENCE_SECONDS = 10
+
+# what WorkerManagerHeartbeat.activeWorkers reads when the manager does not report it
+UNREPORTED_ACTIVE_WORKERS = 0xFFFFFFFF
+
 # if didn't receive heartbeat for following seconds, then scheduler will treat client as dead and cancel remaining
 # tasks for this client
 DEFAULT_CLIENT_TIMEOUT_SECONDS = 60
@@ -50,6 +57,26 @@ DEFAULT_WORKER_MANAGER_TIMEOUT_SECONDS = 10
 # minimum number of seconds after a scale-down request before a worker manager will honor it,
 # to avoid flapping under intermittent load. 0 disables the cooldown.
 DEFAULT_WORKER_MANAGER_SCALE_DOWN_COOLDOWN_SECONDS = 30
+
+# seconds a native worker manager lets its workers finish their running tasks after SIGTERM, before it stops them.
+# Below the default Kubernetes terminationGracePeriodSeconds of 30, so a stopped worker still has time to tell the
+# scheduler it is leaving before the container is killed.
+DEFAULT_WORKER_MANAGER_DRAIN_TIMEOUT_SECONDS = 20
+
+# seconds a native worker manager waits before it replaces a worker that died on its own; doubles with each
+# consecutive death, up to MAX_WORKER_RESTART_BACKOFF_DOUBLINGS times, so a worker that cannot start does not spin
+DEFAULT_WORKER_RESTART_BACKOFF_SECONDS = 1
+MAX_WORKER_RESTART_BACKOFF_DOUBLINGS = 6
+
+# a worker that has run this long proves it can start, so the restart backoff starts over
+WORKER_STABLE_SECONDS = 60
+
+# how long a worker gets to exit after it is told to stop, before it is killed: its teardown takes up to
+# WORKER_EXIT_NOTIFICATION_TIMEOUT_SECONDS plus DEFAULT_PROCESSOR_KILL_DELAY_SECONDS
+WORKER_STOP_TIMEOUT_SECONDS = 10
+
+# how often a native worker manager reaps, replaces, and drains its workers
+WORKER_SUPERVISION_INTERVAL_SECONDS = 0.5
 
 # number of seconds for load balance, if value is -1 means disable load balance
 DEFAULT_LOAD_BALANCE_SECONDS = 1
@@ -100,6 +127,13 @@ DEFAULT_HARD_PROCESSOR_SUSPEND = False
 # scheduler from waiting out the heartbeat timeout, so it is never worth blocking our own exit on: a
 # connection that is wedged rather than closed would otherwise hang teardown indefinitely.
 WORKER_EXIT_NOTIFICATION_TIMEOUT_SECONDS = 5
+
+# how often a processor checks that its agent is alive: without one nobody receives its result, so it quits instead
+# of running an abandoned task to the end
+PROCESSOR_AGENT_CHECK_INTERVAL_SECONDS = 1
+
+# how often a worker checks for a drain request from its manager, and whether its last running task finished
+WORKER_DRAIN_CHECK_INTERVAL_SECONDS = 1
 
 # =======================
 # LOGGING SPECIFIC OPTIONS

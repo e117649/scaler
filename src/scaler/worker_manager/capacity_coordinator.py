@@ -13,12 +13,11 @@ logger = logging.getLogger(__name__)
 class CapacityCoordinator:
     """Manages async scale-up/down reconciliation for a pool of homogeneous units.
 
-    Callers set a desired unit count via `set_desired_unit_count`. The loop
-    compares that against the live count returned by `active_unit_count` and
-    calls `start_units` or `stop_units` with the delta. A single long-lived task
-    blocks on an asyncio.Event between reconciles so it only wakes when a new
-    desired count has been signalled; rapid successive calls are coalesced because
-    the task always reads the latest desired count when it wakes.
+    Callers set a desired unit count via `set_desired_unit_count`, unchanged or not, and each call reconciles: the
+    loop compares the count against the live count returned by `active_unit_count` and calls `start_units` or
+    `stop_units` with the delta, so a unit that died since the last call is replaced. A single long-lived task blocks
+    on an asyncio.Event between reconciles; rapid successive calls are coalesced because the task always reads the
+    latest desired count when it wakes.
 
     If `scale_down_cooldown_seconds` is positive, a scale-down is deferred until that many
     seconds have passed since the first scale-down request in the current streak;
@@ -58,16 +57,7 @@ class CapacityCoordinator:
         self._stop: asyncio.Event = asyncio.Event()
 
     async def set_desired_unit_count(self, count: int) -> None:
-        """Set the desired number of units and signal the reconcile task.
-
-        Also re-signals when *count* is unchanged but a scale-down is deferred in cooldown,
-        so callers that re-assert the same desired count on a fixed interval (e.g. every
-        heartbeat) will trigger a retry once the cooldown window has elapsed.
-        """
-        # An unchanged count is only a true no-op if nothing is pending: while a scale-down is
-        # deferred, we must keep signalling or it would never be retried once the cooldown ends.
-        if count == self._desired_unit_count and not self._scale_down_cooldown.is_running:
-            return
+        """Set the desired number of units and signal the reconcile task, also for an unchanged count."""
         if count != self._desired_unit_count:
             logger.info(f"Desired unit count changed: {self._desired_unit_count} -> {count}")
             self._desired_unit_count = count

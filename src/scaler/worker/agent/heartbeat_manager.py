@@ -128,6 +128,7 @@ class VanillaHeartbeatManager(Looper, HeartbeatManager):
                 hostname=get_hostname(),
                 netSentBytes=net_sent,
                 netRecvBytes=net_recv,
+                draining=self._worker_task_manager.is_draining(),
             ),
             detached=True,
         )

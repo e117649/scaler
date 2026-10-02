@@ -259,6 +259,7 @@ class VanillaGraphTaskController(GraphTaskController, Looper, Reporter):
                     for argument in task_info.task.functionArgs
                 ],
                 capabilities=dict_to_capabilities(capabilities_to_dict(task_info.task.capabilities)),
+                parentTaskId=task_info.task.parentTaskId,
             )
 
             await self._task_controller.on_task_new(task)

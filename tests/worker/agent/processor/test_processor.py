@@ -1,8 +1,11 @@
 import logging
+import sys
 import unittest
 from typing import Any, Optional
 from unittest import mock
 from unittest.mock import Mock
+
+import psutil
 
 import scaler.worker.agent.processor.processor as processor_module
 from scaler.config.types.address import AddressConfig
@@ -11,7 +14,7 @@ from scaler.io.ymq import SocketStopRequestedError
 from scaler.protocol.capnp import Task, TaskResultType
 from scaler.utility.exceptions import ObjectStorageException
 from scaler.utility.identifiers import ClientID, ObjectID, TaskID
-from scaler.worker.agent.processor.processor import Processor
+from scaler.worker.agent.processor.processor import PROCESSOR_NICE_VALUE, Processor, lower_processor_priority
 
 _LOGGER_NAME = "scaler.worker.agent.processor.processor"
 
@@ -295,3 +298,35 @@ class ProcessorRunForeverTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LowerProcessorPriorityTest(unittest.TestCase):
+    """User code must not outrank the agent that heartbeats for it, and a machine that refuses the change must not
+    stop the processor from starting."""
+
+    def test_unix_processor_is_set_to_the_lowest_priority(self) -> None:
+        if sys.platform == "win32":
+            self.skipTest("nice values are POSIX only")
+
+        with mock.patch.object(processor_module.psutil, "Process") as process_class:
+            lower_processor_priority()
+
+        process_class.return_value.nice.assert_called_once_with(PROCESSOR_NICE_VALUE)
+
+    def test_windows_processor_is_set_below_normal(self) -> None:
+        if sys.platform != "win32":
+            self.skipTest("priority classes are Windows only")
+
+        with mock.patch.object(processor_module.psutil, "Process") as process_class:
+            lower_processor_priority()
+
+        process_class.return_value.nice.assert_called_once_with(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+
+    def test_a_refused_priority_change_warns_and_continues(self) -> None:
+        with mock.patch.object(processor_module.psutil, "Process") as process_class:
+            process_class.return_value.nice.side_effect = psutil.AccessDenied(pid=1)
+
+            with self.assertLogs(_LOGGER_NAME, level=logging.WARNING) as captured:
+                lower_processor_priority()
+
+        self.assertIn("could not lower its scheduling priority", captured.records[0].getMessage())

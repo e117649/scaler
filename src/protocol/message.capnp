@@ -13,6 +13,7 @@ struct Task {
     funcObjectId @3 :Data;
     functionArgs @4 :List(Argument);
     capabilities @5 :List(CommonType.TaskCapability);
+    parentTaskId @6 :Data;   # the task whose processor submitted this one, empty when submitted from outside a task
 
     struct Argument {
         type @0 :ArgumentType;
@@ -88,6 +89,7 @@ struct WorkerHeartbeat {
     hostname @10 :Text;   # machine this worker runs on, so the monitor can group workers by host
     netSentBytes @11 :UInt64;  # host-wide counters, identical for workers sharing a host; the monitor
     netRecvBytes @12 :UInt64;  # reads them once per hostname rather than summing them
+    draining @13 :Bool;        # set once the worker starts to drain and never cleared: it starts no new task
 }
 
 struct WorkerHeartbeatEcho {
@@ -98,6 +100,9 @@ struct WorkerManagerHeartbeat {
     maxTaskConcurrency @0 :UInt32;
     capabilities @1 :List(CommonType.TaskCapability);
     workerManagerID @2 :Data;
+    # Workers this manager runs that are not leaving. The scheduler drops the silent workers beyond this count
+    # instead of waiting out worker_timeout_seconds. The default means the manager does not say.
+    activeWorkers @3 :UInt32 = 0xffffffff;
 }
 
 struct WorkerManagerHeartbeatEcho {

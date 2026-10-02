@@ -11,9 +11,11 @@ from contextvars import ContextVar, Token
 from multiprocessing.synchronize import Event as EventType
 from typing import IO, Callable, List, Optional, Tuple, TypeVar, cast
 
+import psutil
 import tblib.pickling_support
 
 from scaler.config.common.security import SecurityConfig
+from scaler.config.defaults import PROCESSOR_AGENT_CHECK_INTERVAL_SECONDS
 from scaler.config.types.address import AddressConfig
 from scaler.io import ymq
 from scaler.io.mixins import ConnectorRemoteType, NetworkBackend, SyncConnector, SyncObjectStorageConnector
@@ -33,6 +35,7 @@ from scaler.utility.exceptions import ObjectStorageException
 from scaler.utility.identifiers import ClientID, ObjectID, TaskID
 from scaler.utility.logging.utility import LogType, detect_log_type
 from scaler.utility.metadata.task_flags import retrieve_task_flags_from_task
+from scaler.utility.oom_score import OOM_SCORE_ADJ_MAX, raise_oom_score_adj
 from scaler.utility.process_bootstrap import bootstrap_process
 from scaler.utility.serialization import serialize_failure
 from scaler.worker.agent.processor.object_cache import ObjectCache
@@ -43,6 +46,12 @@ logger = logging.getLogger(__name__)
 
 SUSPEND_SIGNAL = "SIGUSR1"  # use str instead of a signal.Signal to not trigger an import error on unsupported systems.
 
+# The agent and its processor are separate processes competing for the same cores. The agent sends the heartbeat
+# that stops the scheduler declaring this worker dead and needs very little CPU to do it, so user code runs below
+# it. Kept small deliberately: the maximum of 19 yields to anything at normal priority, which costs nested tasks
+# an order of magnitude when the machine runs anything else.
+PROCESSOR_NICE_VALUE = 5
+
 # Attempts at handing a finished task's result off, and the wait before the second one, doubling from
 # there. The connectors reconnect on their own, so the delays only have to outlast a reconnect.
 RESULT_HAND_OFF_MAX_ATTEMPTS = 4
@@ -51,6 +60,23 @@ RESULT_HAND_OFF_RETRY_DELAY_SECONDS = 1.0
 _current_processor: ContextVar[Optional["Processor"]] = ContextVar("_current_processor", default=None)
 
 _T = TypeVar("_T")
+
+
+def lower_processor_priority() -> None:
+    """Drop this process below the worker agent in the OS scheduler.
+
+    Every processor is lowered by the same amount, so they keep their equal share of the machine relative to each
+    other and only yield to the agent that supervises them.
+    """
+    try:
+        process = psutil.Process()
+        if sys.platform == "win32":
+            process.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+        else:
+            process.nice(PROCESSOR_NICE_VALUE)
+    except Exception as error:
+        # advisory only: a platform that refuses or cannot express this must still run tasks
+        logger.warning(f"Processor[{os.getpid()}] could not lower its scheduling priority: {error}")
 
 
 class Processor(multiprocessing.get_context("spawn").Process):  # type: ignore
@@ -135,6 +161,11 @@ class Processor(multiprocessing.get_context("spawn").Process):  # type: ignore
         bootstrap_process(log_paths=tuple(logging_paths), logging_level=self._logging_level)
         tblib.pickling_support.install()
 
+        lower_processor_priority()
+        # user code is what exhausts memory, so the OOM killer takes a processor before its agent or manager
+        raise_oom_score_adj(OOM_SCORE_ADJ_MAX)
+        threading.Thread(target=self.__quit_when_agent_is_gone, name="ProcessorAgentWatch", daemon=True).start()
+
         self._backend = get_network_backend_from_env()
         assert self._backend is not None
 
@@ -163,6 +194,24 @@ class Processor(multiprocessing.get_context("spawn").Process):  # type: ignore
                 raise RuntimeError(
                     f"Processor[{self.pid}] initialization failed due to preload error: {self._preload}"
                 ) from e
+
+    @staticmethod
+    def __quit_when_agent_is_gone() -> None:
+        """Exit once the agent that started this processor is gone, instead of running its task to the end."""
+        agent = psutil.Process().parent()
+        if agent is None:
+            return
+        agent_create_time = agent.create_time()
+
+        while True:
+            time.sleep(PROCESSOR_AGENT_CHECK_INTERVAL_SECONDS)
+            try:
+                alive = psutil.Process(agent.pid).create_time() == agent_create_time
+            except psutil.NoSuchProcess:
+                alive = False
+            if not alive:
+                logger.warning(f"Processor[{os.getpid()}]: agent pid={agent.pid} is gone, quitting")
+                os._exit(1)
 
     def __register_signals(self):
         if sys.platform != "win32":
