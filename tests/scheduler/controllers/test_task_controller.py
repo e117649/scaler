@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import unittest
 import unittest.mock
@@ -375,17 +376,24 @@ class TestTaskControllerBehavior(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.harness.messages_sent_to(CLIENT_ID)), 1)
         self.assertEqual(list(self.harness.controller._unassigned), [])
 
-    async def test_task_cancel_without_a_worker_reports_not_found(self):
+    async def test_a_cancel_racing_the_removal_of_its_worker_is_confirmed_by_the_disconnect(self):
+        """remove_worker clears the task's worker before the WorkerDisconnected it queued reaches the task."""
         state_machine = await self.harness.enter_state(TaskState.running)
         self.harness.set_worker_holds_task(False)
 
-        await self.harness.controller.on_task_cancel(CLIENT_ID, make_task_cancel())
+        with self.assertNoLogs("scaler", level=logging.ERROR):
+            await self.harness.controller.on_task_cancel(CLIENT_ID, make_task_cancel())
 
-        self.assertEqual(state_machine.current_state(), TaskState.canceledNotFound)
+            self.assertEqual(state_machine.current_state(), TaskState.canceling)
+            self.assertEqual(self.harness.messages_sent_to(CLIENT_ID), [])
+
+            await self.harness.controller.on_worker_disconnect(TASK_ID, WORKER_ID)
+
+        self.assertIsNone(self.harness.get_state_machine())
         confirms = self.harness.cancel_confirms_sent_to(CLIENT_ID)
-        self.assertEqual(len(confirms), 1)
         self.assertEqual(
-            TaskCancelConfirmType(confirms[0].cancelConfirmType.value), TaskCancelConfirmType.cancelNotFound
+            [TaskCancelConfirmType(confirm.cancelConfirmType.value) for confirm in confirms],
+            [TaskCancelConfirmType.canceled],
         )
 
     async def test_each_task_result_type_reaches_its_own_terminal_state(self):

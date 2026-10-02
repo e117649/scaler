@@ -65,7 +65,7 @@ LOCK_ACQUIRE_TIMEOUT_SECONDS = 10
 # widen without its annotation widening too.
 DispatchTargetStates = Literal[TaskState.inactive, TaskState.running]
 HasCapacityTargetStates = Literal[TaskState.running]
-TaskCancelTargetStates = Literal[TaskState.canceled, TaskState.canceling, TaskState.canceledNotFound]
+TaskCancelTargetStates = Literal[TaskState.canceled, TaskState.canceling]
 BalanceCancelTargetStates = Literal[TaskState.balanceCanceling]
 TaskResultTargetStates = Literal[TaskState.success, TaskState.failed, TaskState.failedWorkerDied]
 CancelConfirmCanceledTargetStates = Literal[TaskState.canceled, TaskState.inactive, TaskState.running]
@@ -460,13 +460,9 @@ class VanillaTaskController(TaskController, Looper, Reporter):
                 # in case the task being canceled has no task in the scheduler, so we know which client to confirm to
                 self._client_controller.on_task_begin(event.client_id, event.task_id)
 
-                if await self.__send_task_cancel_to_worker(event.task_cancel):
-                    return TaskState.canceling
-
-                await self.__send_task_cancel_confirm_to_client(
-                    TaskCancelConfirm(taskId=event.task_id, cancelConfirmType=TaskCancelConfirmType.cancelNotFound)
-                )
-                return TaskState.canceledNotFound
+                # no worker holding it means remove_worker took it, and the WorkerDisconnected it queued confirms it
+                await self.__send_task_cancel_to_worker(event.task_cancel)
+                return TaskState.canceling
             case TaskState.balanceCanceling:
                 # a TaskCancel is already on its way to the worker, so we must not send a second one. The confirm of
                 # the balance cancel then completes this client cancel.
@@ -668,7 +664,6 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         worker = await self._worker_controller.on_task_cancel(task_cancel)
         assert isinstance(worker, WorkerID)
         if not worker.is_valid():
-            logger.error(f"{task_cancel.taskId!r}: cannot find task in worker to cancel")
             return False
 
         await self._binder.send(worker, task_cancel, detached=True)
