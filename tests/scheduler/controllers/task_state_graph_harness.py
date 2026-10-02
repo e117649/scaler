@@ -60,7 +60,9 @@ LIVE_TASK_STATES = (TaskState.inactive, TaskState.running, TaskState.canceling, 
 REJECTED = "(rejected)"
 
 
-def make_task(task_id: TaskID = TASK_ID, argument_object_ids: Sequence[ObjectID] = ()) -> Task:
+def make_task(
+    task_id: TaskID = TASK_ID, argument_object_ids: Sequence[ObjectID] = (), parent_task_id: bytes = b""
+) -> Task:
     return Task(
         taskId=task_id,
         source=CLIENT_ID,
@@ -70,6 +72,7 @@ def make_task(task_id: TaskID = TASK_ID, argument_object_ids: Sequence[ObjectID]
             Task.Argument(type=Task.Argument.ArgumentType.objectID, data=object_id) for object_id in argument_object_ids
         ],
         capabilities=[],
+        parentTaskId=parent_task_id,
     )
 
 

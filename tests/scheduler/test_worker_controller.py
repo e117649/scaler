@@ -115,6 +115,7 @@ class TestWorkerControllerMassEviction(unittest.TestCase):
             funcObjectId=b"",
             functionArgs=[],
             capabilities={},
+            parentTaskId=b"",
         )
 
     def test_mass_eviction_is_handled_without_crashing(self):

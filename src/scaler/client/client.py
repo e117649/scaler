@@ -602,6 +602,7 @@ class Client:
                 Task.Argument(type=Task.Argument.ArgumentType.objectID, data=argument) for argument in function_args
             ],
             capabilities=dict_to_capabilities(capabilities),
+            parentTaskId=self.__get_parent_task_id(),
         )
 
         future = self._future_factory(task=task, is_delayed=delayed, group_task_id=None)
@@ -694,6 +695,7 @@ class Client:
         node_name_to_task_id = {node_name: TaskID.generate_task_id() for node_name in call_graph.keys()}
 
         task_flags_bytes = self.__get_task_flags().serialize()
+        parent_task_id = self.__get_parent_task_id()
 
         task_id_to_tasks = dict()
 
@@ -730,6 +732,7 @@ class Client:
                     for argument in arguments
                 ],
                 capabilities=dict_to_capabilities(capabilities),
+                parentTaskId=parent_task_id,
             )
 
         result_task_ids = [node_name_to_task_id[key] for key in keys if key in call_graph]
@@ -768,10 +771,10 @@ class Client:
         return graph_task, compute_futures, ready_futures
 
     def __get_task_flags(self) -> TaskFlags:
-        parent_task_priority = self.__get_parent_task_priority()
+        parent_task = self.__get_parent_task()
 
-        if parent_task_priority is not None:
-            task_priority = parent_task_priority + 1
+        if parent_task is not None:
+            task_priority = retrieve_task_flags_from_task(parent_task).priority + 1
         else:
             task_priority = 0
 
@@ -789,8 +792,8 @@ class Client:
             self._connector_agent.destroy()
 
     @staticmethod
-    def __get_parent_task_priority() -> Optional[int]:
-        """If the client is running inside a Scaler processor, returns the priority of the associated task."""
+    def __get_parent_task() -> Optional[Task]:
+        """If the client is running inside a Scaler processor, returns the task that processor runs."""
         if Processor is None:
             return None
 
@@ -802,7 +805,12 @@ class Client:
         current_task = current_processor.current_task()
         assert current_task is not None
 
-        return retrieve_task_flags_from_task(current_task).priority
+        return current_task
+
+    def __get_parent_task_id(self) -> bytes:
+        """The task this client runs inside, empty outside a task. The scheduler cancels what a lost task submitted."""
+        parent_task = self.__get_parent_task()
+        return parent_task.taskId if parent_task is not None else b""
 
     def __resolve_scheduler_address(self, address: Optional[str]) -> AddressConfig:
         """Resolve the scheduler address based on the provided address and worker context."""

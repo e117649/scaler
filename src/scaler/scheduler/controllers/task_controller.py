@@ -45,6 +45,7 @@ from scaler.scheduler.task.task_state_manager import TaskStateManager
 from scaler.utility.exceptions import SchedulerError
 from scaler.utility.identifiers import ClientID, ObjectID, TaskID, WorkerID
 from scaler.utility.mixins import Looper, Reporter
+from scaler.utility.one_to_many_dict import OneToManyDict
 from scaler.utility.serialization import serialize_failure
 
 if sys.version_info >= (3, 11):
@@ -113,6 +114,8 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         # Live tasks naming each object, counted as tasks arrive and leave: a status report reads it per object.
         self._object_task_counts: Dict[ObjectID, int] = dict()
         self._task_state_manager: TaskStateManager = TaskStateManager(debug=True)
+        # Live tasks under the live task that submitted them from its processor, to cancel them when its run is lost.
+        self._parent_to_children: OneToManyDict[TaskID, TaskID] = OneToManyDict()
 
         self._unassigned: Deque[TaskID] = deque()
 
@@ -157,6 +160,7 @@ class VanillaTaskController(TaskController, Looper, Reporter):
 
         self._client_controller.on_task_begin(task.source, task.taskId)
         self.__hold_task(task)
+        self.__link_to_parent(task)
 
         worker_id = self._worker_controller.acquire_worker(task)
         if not worker_id.is_valid():
@@ -276,6 +280,7 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         The machine's lock is held for the whole transition.
         """
 
+        orphans: List[TaskID] = []
         async with self.__locked_machine(event) as state_machine:
             if state_machine is None:
                 return
@@ -328,9 +333,16 @@ class VanillaTaskController(TaskController, Looper, Reporter):
 
             self._task_state_manager.commit(event.task_id, type(event), target)
 
+            if self.__leaves_orphans(event, target):
+                orphans = self.__get_children(event.task_id)
+
             if target in TERMINAL_TASK_STATES:
                 self._task_state_manager.remove_state_machine(event.task_id)
                 self.__release_task(event.task_id)
+
+        # outside the parent's lock, so that canceling a child never waits on a lock while holding another
+        for orphan in orphans:
+            await self.__cancel_orphan(orphan)
 
     def __is_task_owned_by_worker(self, event: WorkerReportedTaskEvent) -> bool:
         """Answer whether the worker that reported on a task is the worker that holds it.
@@ -620,6 +632,13 @@ class VanillaTaskController(TaskController, Looper, Reporter):
     ) -> Optional[DisconnectTargetStates]:
         match source:
             case TaskState.running | TaskState.balanceCanceling:
+                if self.__has_lost_parent(event.task_id):
+                    # its parent's run is gone, and nothing reads the result of a run started again
+                    await self.__send_task_cancel_confirm_to_client(
+                        TaskCancelConfirm(taskId=event.task_id, cancelConfirmType=TaskCancelConfirmType.canceled)
+                    )
+                    return TaskState.canceled
+
                 return await self.__acquire_and_dispatch(event.task_id)
             case TaskState.canceling:
                 # remove_worker already released the capacity, so there is no on_task_done here
@@ -739,7 +758,55 @@ class VanillaTaskController(TaskController, Looper, Reporter):
         for object_id in task_object_ids(task):
             self._object_task_counts[object_id] = self._object_task_counts.get(object_id, 0) + 1
 
+    def __link_to_parent(self, task: Task) -> None:
+        """Index a task under its parent. A parent that is not live here, or no parent, links nothing."""
+        parent_task_id = TaskID(task.parentTaskId)
+        if self._task_state_manager.get_state_machine(parent_task_id) is None:
+            return
+
+        self._parent_to_children.add(parent_task_id, task.taskId)
+
+    def __get_children(self, task_id: TaskID) -> List[TaskID]:
+        if not self._parent_to_children.has_key(task_id):
+            return []
+
+        return list(self._parent_to_children.get_values(task_id))
+
+    @staticmethod
+    def __leaves_orphans(event: TaskEvent, target: TaskState) -> bool:
+        """Whether a transition ends a task's run without success, which leaves the run's children without a reader.
+
+        A run ends in a terminal state, or when its worker disconnects and the task is placed again. A task that
+        succeeded can leave children running on purpose, and the client that submitted them still owns them.
+        """
+        if target == TaskState.success:
+            return False
+
+        return target in TERMINAL_TASK_STATES or isinstance(event, WorkerDisconnected)
+
+    def __has_lost_parent(self, task_id: TaskID) -> bool:
+        """Whether a task's parent holds no worker, which means the run that submitted the task is gone."""
+        if not self._parent_to_children.has_value(task_id):
+            return False
+
+        parent_task_id = self._parent_to_children.get_key(task_id)
+        return not self._worker_controller.get_worker_by_task_id(parent_task_id).is_valid()
+
+    async def __cancel_orphan(self, task_id: TaskID) -> None:
+        task = self._task_id_to_task.get(task_id)
+        if task is None:
+            # it ended while the orphans before it were canceled
+            return
+
+        await self.on_task_cancel(task.source, TaskCancel(taskId=task_id, flags=TaskCancel.TaskCancelFlags(force=True)))
+
     def __release_task(self, task_id: TaskID) -> None:
+        if self._parent_to_children.has_value(task_id):
+            self._parent_to_children.remove_value(task_id)
+        if self._parent_to_children.has_key(task_id):
+            # the children of an ended task stay with the client that submitted them, unless __route canceled them
+            self._parent_to_children.remove_key(task_id)
+
         task = self._task_id_to_task.pop(task_id, None)
         if task is None:
             return

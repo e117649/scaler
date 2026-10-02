@@ -168,6 +168,7 @@ class Task(BaseMessage):
     funcObjectId: ScalerObjectID
     functionArgs: Any
     capabilities: Any
+    parentTaskId: bytes
 
     class Argument(CapnpStruct):
         type: Any

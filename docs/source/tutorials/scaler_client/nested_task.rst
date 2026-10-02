@@ -14,6 +14,19 @@ What the example does:
 
 This pattern is useful to demonstrate nested execution, but recursion creates many small tasks and can be expensive.
 
+Children of a task that does not succeed
+----------------------------------------
+
+A task submitted from inside another task is a child of that task.
+The scheduler cancels a child, and the children it submitted in turn, when the run of its parent ends without success:
+
+- the parent raises, or its processor dies
+- the parent is canceled
+- the worker of the parent disconnects, and the scheduler places the parent again
+
+A parent that succeeds leaves its children running, owned by the client that submitted them.
+A child submitted to another scheduler has no parent there, so that scheduler never cancels it this way.
+
 Nested client addresses
 -----------------------
 

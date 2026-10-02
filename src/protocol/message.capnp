@@ -13,6 +13,7 @@ struct Task {
     funcObjectId @3 :Data;
     functionArgs @4 :List(Argument);
     capabilities @5 :List(CommonType.TaskCapability);
+    parentTaskId @6 :Data;   # the task whose processor submitted this one, empty when submitted from outside a task
 
     struct Argument {
         type @0 :ArgumentType;

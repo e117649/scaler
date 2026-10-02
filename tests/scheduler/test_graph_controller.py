@@ -94,6 +94,7 @@ class TestGraphControllerCleanUp(unittest.TestCase):
                     funcObjectId=ObjectID.generate_object_id(client_id),
                     functionArgs=[],
                     capabilities={},
+                    parentTaskId=b"",
                 )
                 for subtask_id in subtask_ids
             ],

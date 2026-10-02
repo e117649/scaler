@@ -4,9 +4,17 @@ import os
 import unittest
 import unittest.mock
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Set, Tuple
 
-from scaler.protocol.capnp import Task, TaskCancelConfirmType, TaskResult, TaskResultType, TaskState
+from scaler.protocol.capnp import (
+    Task,
+    TaskCancel,
+    TaskCancelConfirm,
+    TaskCancelConfirmType,
+    TaskResult,
+    TaskResultType,
+    TaskState,
+)
 from scaler.scheduler.controllers import task_controller
 from scaler.scheduler.task.task_state_machine import TERMINAL_TASK_STATES
 from scaler.utility.exceptions import SchedulerError
@@ -829,6 +837,173 @@ class TestObjectTaskCounts(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(self.harness.controller._object_task_counts, {})
+
+
+CHILD_ID = TaskID(b"child-task")
+SECOND_CHILD_ID = TaskID(b"second-child-task")
+GRANDCHILD_ID = TaskID(b"grandchild-task")
+
+
+class TestParentLink(unittest.IsolatedAsyncioTestCase):
+    """A task submitted from inside another task is canceled when the run that submitted it ends without success."""
+
+    def setUp(self) -> None:
+        setup_logger()
+        logging_test_name(self)
+        self.harness = TaskControllerHarness()
+
+    async def add_task(self, task_id: TaskID, parent_task_id: bytes, queued: bool = False) -> None:
+        self.harness.set_capacity_available(not queued)
+        await self.harness.controller.on_task_new(make_task(task_id, parent_task_id=parent_task_id))
+        self.harness.set_capacity_available(True)
+
+    def state_of(self, task_id: TaskID) -> Optional[TaskState]:
+        state_machine = self.harness.controller._task_state_manager.get_state_machine(task_id)
+        return state_machine.current_state() if state_machine is not None else None
+
+    def forced_cancels_sent(self) -> List[bytes]:
+        return [
+            message.taskId
+            for message in self.harness.messages_sent_to(WORKER_ID)
+            if isinstance(message, TaskCancel) and message.flags.force
+        ]
+
+    async def test_a_parent_that_loses_its_worker_cancels_its_children(self):
+        await self.harness.enter_state(TaskState.running)
+        await self.add_task(CHILD_ID, TASK_ID)
+        await self.add_task(SECOND_CHILD_ID, TASK_ID, queued=True)
+        self.harness.reset_recorded_calls()
+
+        await self.harness.controller.on_worker_disconnect(TASK_ID, WORKER_ID)
+
+        self.assertEqual(self.state_of(TASK_ID), TaskState.running)
+        self.assertEqual(self.forced_cancels_sent(), [CHILD_ID])
+        self.assertEqual(self.state_of(CHILD_ID), TaskState.canceling)
+        self.assertIsNone(self.state_of(SECOND_CHILD_ID))
+
+    async def test_every_outcome_but_success_cancels_the_children(self):
+        async def fail() -> None:
+            await self.harness.controller.on_task_result(WORKER_ID, make_task_result(TaskResultType.failed))
+
+        async def die() -> None:
+            await self.harness.controller.on_task_result(WORKER_ID, make_task_result(TaskResultType.failedWorkerDied))
+
+        async def cancel() -> None:
+            await self.harness.controller.on_task_cancel(CLIENT_ID, make_task_cancel(force=True))
+            await self.harness.controller.on_task_cancel_confirm(
+                WORKER_ID, make_task_cancel_confirm(TaskCancelConfirmType.canceled)
+            )
+
+        outcomes: Dict[str, Callable[[], Awaitable[None]]] = {"failed": fail, "worker died": die, "canceled": cancel}
+        for name, end_parent in outcomes.items():
+            with self.subTest(outcome=name):
+                self.harness = TaskControllerHarness()
+                await self.harness.enter_state(TaskState.running)
+                await self.add_task(CHILD_ID, TASK_ID)
+                self.harness.reset_recorded_calls()
+
+                await end_parent()
+
+                self.assertIsNone(self.state_of(TASK_ID))
+                self.assertEqual(self.forced_cancels_sent().count(CHILD_ID), 1)
+                self.assertEqual(self.state_of(CHILD_ID), TaskState.canceling)
+                self.assertEqual(self.harness.controller._parent_to_children.keys(), set())
+
+    async def test_a_successful_parent_leaves_its_children_to_their_client(self):
+        """A task may return while what it submitted still runs, and the client that submitted it still owns it."""
+        await self.harness.enter_state(TaskState.running)
+        await self.add_task(CHILD_ID, TASK_ID)
+        self.harness.reset_recorded_calls()
+
+        await self.harness.controller.on_task_result(WORKER_ID, make_task_result(TaskResultType.success))
+
+        self.assertEqual(self.forced_cancels_sent(), [])
+        self.assertEqual(self.state_of(CHILD_ID), TaskState.running)
+
+        self.harness.worker_controller.get_worker_by_task_id.return_value = NO_WORKER
+        await self.harness.controller.on_worker_disconnect(CHILD_ID, WORKER_ID)
+
+        self.assertEqual(self.state_of(CHILD_ID), TaskState.running)
+
+    async def test_an_orphan_whose_worker_disconnects_is_canceled_rather_than_placed_again(self):
+        """The parent ran on the same worker: remove_worker cleared both, and the child's event came first."""
+        await self.harness.enter_state(TaskState.running)
+        await self.add_task(CHILD_ID, TASK_ID)
+        self.harness.worker_controller.get_worker_by_task_id.return_value = NO_WORKER
+        self.harness.reset_recorded_calls()
+
+        await self.harness.controller.on_worker_disconnect(CHILD_ID, WORKER_ID)
+
+        self.assertIsNone(self.state_of(CHILD_ID))
+        self.harness.worker_controller.acquire_worker.assert_not_called()
+        confirms = self.harness.cancel_confirms_sent_to(CLIENT_ID)
+        self.assertEqual([confirm.taskId for confirm in confirms], [CHILD_ID])
+        self.assertEqual(TaskCancelConfirmType(confirms[0].cancelConfirmType.value), TaskCancelConfirmType.canceled)
+
+    async def test_an_orphan_on_its_parents_lost_worker_is_canceled_by_its_own_disconnect(self):
+        """remove_worker cleared both, and the parent's event came first: the cancel waits for the child's event."""
+        await self.harness.enter_state(TaskState.running)
+        await self.add_task(CHILD_ID, TASK_ID)
+        self.harness.set_worker_holds_task(False)
+        self.harness.worker_controller.get_worker_by_task_id.return_value = NO_WORKER
+        self.harness.reset_recorded_calls()
+
+        with self.assertNoLogs("scaler", level=logging.ERROR):
+            await self.harness.controller.on_worker_disconnect(TASK_ID, WORKER_ID)
+
+            self.assertEqual(self.state_of(CHILD_ID), TaskState.canceling)
+            self.assertEqual(self.forced_cancels_sent(), [])
+
+            await self.harness.controller.on_worker_disconnect(CHILD_ID, WORKER_ID)
+
+        self.assertIsNone(self.state_of(CHILD_ID))
+        confirms = [
+            confirm for confirm in self.harness.cancel_confirms_sent_to(CLIENT_ID) if confirm.taskId == CHILD_ID
+        ]
+        self.assertEqual(
+            [TaskCancelConfirmType(confirm.cancelConfirmType.value) for confirm in confirms],
+            [TaskCancelConfirmType.canceled],
+        )
+
+    async def test_a_child_whose_parent_still_runs_is_placed_again(self):
+        await self.harness.enter_state(TaskState.running)
+        await self.add_task(CHILD_ID, TASK_ID)
+        self.harness.reset_recorded_calls()
+
+        await self.harness.controller.on_worker_disconnect(CHILD_ID, WORKER_ID)
+
+        self.assertEqual(self.state_of(CHILD_ID), TaskState.running)
+        self.assertEqual(self.harness.cancel_confirms_sent_to(CLIENT_ID), [])
+
+    async def test_a_parent_this_scheduler_does_not_hold_links_nothing(self):
+        """A client inside a task can name another scheduler, whose tasks this scheduler never sees."""
+        await self.add_task(CHILD_ID, TaskID(b"another-schedulers-task"))
+        self.harness.worker_controller.get_worker_by_task_id.return_value = NO_WORKER
+
+        await self.harness.controller.on_worker_disconnect(CHILD_ID, WORKER_ID)
+
+        self.assertEqual(self.state_of(CHILD_ID), TaskState.running)
+        self.assertEqual(self.harness.controller._parent_to_children.keys(), set())
+
+    async def test_the_cancel_reaches_grandchildren_once_the_child_is_canceled(self):
+        await self.harness.enter_state(TaskState.running)
+        await self.add_task(CHILD_ID, TASK_ID)
+        await self.add_task(GRANDCHILD_ID, CHILD_ID)
+        self.harness.reset_recorded_calls()
+
+        await self.harness.controller.on_worker_disconnect(TASK_ID, WORKER_ID)
+
+        self.assertEqual(self.forced_cancels_sent(), [CHILD_ID])
+        self.assertEqual(self.state_of(GRANDCHILD_ID), TaskState.running)
+        self.harness.reset_recorded_calls()
+
+        await self.harness.controller.on_task_cancel_confirm(
+            WORKER_ID, TaskCancelConfirm(taskId=CHILD_ID, cancelConfirmType=TaskCancelConfirmType.canceled)
+        )
+
+        self.assertIsNone(self.state_of(CHILD_ID))
+        self.assertEqual(self.forced_cancels_sent(), [GRANDCHILD_ID])
+        self.assertEqual(self.state_of(GRANDCHILD_ID), TaskState.canceling)
 
 
 if __name__ == "__main__":
