@@ -5,6 +5,7 @@ import sys
 import time
 import unittest
 from typing import Dict, Optional
+from unittest.mock import AsyncMock, MagicMock
 
 from scaler import Client
 from scaler.cluster.object_storage_server import ObjectStorageServerProcess
@@ -31,10 +32,14 @@ from scaler.config.section.native_worker_manager import NativeWorkerManagerConfi
 from scaler.config.section.scheduler import PolicyConfig
 from scaler.config.types.address import AddressConfig
 from scaler.config.types.worker import WorkerCapabilities
-from scaler.protocol.capnp import Resource, Task, WorkerHeartbeat, WorkerManagerHeartbeat
+from scaler.protocol.capnp import Resource, Task, WorkerHeartbeat, WorkerManagerCommand, WorkerManagerHeartbeat
+from scaler.scheduler.controllers.worker_manager_controller import WorkerManagerController
 from scaler.scheduler.policies.scaling.capability import CapabilityScalingPolicy
 from scaler.scheduler.policies.scaling.static import StaticScalingPolicy
+from scaler.scheduler.policies.scaling.types import WorkerManagerBounds, WorkerManagerSnapshot
+from scaler.scheduler.policies.scaling.utility import build_set_desired_command
 from scaler.scheduler.policies.scaling.vanilla import VanillaScalingPolicy
+from scaler.scheduler.policies.scaling.waterfall import WaterfallRule, WaterfallScalingPolicy
 from scaler.scheduler.policies.utility import create_scaling_policy
 from scaler.utility.identifiers import ClientID, ObjectID, TaskID, WorkerID
 from scaler.utility.logging.utility import setup_logger
@@ -176,7 +181,7 @@ class TestScalingStringParsing(unittest.TestCase):
 
     def test_only_ascii_digits_are_counts(self):
         """Unicode digits are refused with the parser's message, not converted or crashed on in `int()`."""
-        for scaling in ["static:\u00b2", "static:\u0663", "static[a:\u00b2]", "static[a:\u0663]"]:
+        for scaling in ["static:\u00b2", "static:\u0663", "static[a:\u00b2]", "vanilla[a:\u0663]"]:
             with self.subTest(scaling=scaling):
                 with self.assertRaisesRegex(ValueError, "is not a non-negative task concurrency"):
                     create_scaling_policy(scaling)
@@ -187,9 +192,9 @@ class TestScalingStringParsing(unittest.TestCase):
         assert isinstance(static, StaticScalingPolicy)
         self.assertEqual(static._task_concurrency, 4)
 
-        static = create_scaling_policy("static [native:8]")
-        assert isinstance(static, StaticScalingPolicy)
-        self.assertEqual(static._task_concurrency_by_manager, {b"native": 8})
+        vanilla = create_scaling_policy("vanilla [native:8]")
+        assert isinstance(vanilla, VanillaScalingPolicy)
+        self.assertEqual(vanilla._bounds, {b"native": WorkerManagerBounds(8, 0)})
 
     def test_an_argument_with_entries_is_refused_as_such(self):
         with self.assertRaisesRegex(ValueError, "an argument or entries, not both"):
@@ -209,7 +214,7 @@ class TestScalingStringParsing(unittest.TestCase):
                     create_scaling_policy(scaling)
 
     def test_a_worker_manager_id_with_a_bracket_is_refused(self):
-        for scaling in ["static[[native:4]", "static[nat]ive:4]"]:
+        for scaling in ["static[[native:4]", "vanilla[[native:8]", "static[nat]ive:4]"]:
             with self.subTest(scaling=scaling):
                 with self.assertRaises(ValueError):
                     create_scaling_policy(scaling)
@@ -225,7 +230,7 @@ class TestAtCapacityEmission(unittest.TestCase):
 
     def test_vanilla_at_cap_emits_current(self):
         """Vanilla: ratio asks for current+1, cap clamps to current -> emits setDesired(current)."""
-        policy = VanillaScalingPolicy()
+        policy = VanillaScalingPolicy({})
         tasks = {TaskID.generate_task_id(): _create_mock_task(TaskID.generate_task_id(), {}) for _ in range(100)}
         managed = [WorkerID(f"w{i}".encode()) for i in range(10)]
         workers = {wid: _create_mock_worker_heartbeat({}, queued_tasks=10) for wid in managed}
@@ -240,7 +245,7 @@ class TestAtCapacityEmission(unittest.TestCase):
 
     def test_vanilla_changes_emit(self):
         """Vanilla: when ratio's desired differs from current connected, emit."""
-        policy = VanillaScalingPolicy()
+        policy = VanillaScalingPolicy({})
         tasks = {TaskID.generate_task_id(): _create_mock_task(TaskID.generate_task_id(), {}) for _ in range(100)}
         managed = [WorkerID(b"w0")]
         workers = {wid: _create_mock_worker_heartbeat({}, queued_tasks=10) for wid in managed}
@@ -289,9 +294,6 @@ class TestAtCapacityEmission(unittest.TestCase):
 
     def test_waterfall_at_cap_emits_current(self):
         """Waterfall: when the manager is full per the priority chain, it still emits setDesired(current)."""
-        from scaler.scheduler.policies.scaling.types import WorkerManagerSnapshot
-        from scaler.scheduler.policies.scaling.waterfall import WaterfallRule, WaterfallScalingPolicy
-
         rules = [WaterfallRule(priority=1, worker_manager_id=b"mgr", max_task_concurrency=10)]
         policy = WaterfallScalingPolicy(rules)
         # ceil(100/10) = 10; cap=10; desired=10 -> emits setDesired(10).
@@ -316,10 +318,6 @@ class TestPendingWorkersStatus(unittest.IsolatedAsyncioTestCase):
     """Pending-worker reporting in WorkerManagerController.get_status."""
 
     def setUp(self):
-        from unittest.mock import AsyncMock, MagicMock
-
-        from scaler.scheduler.controllers.worker_manager_controller import WorkerManagerController
-
         setup_logger()
         config_controller = MagicMock()
         scaling_policy = MagicMock()
@@ -331,14 +329,15 @@ class TestPendingWorkersStatus(unittest.IsolatedAsyncioTestCase):
         task_controller = MagicMock()
         task_controller._task_id_to_task = {}
         self.worker_controller = MagicMock()
-        self.worker_controller._worker_alive_since = {}
+        self.worker_controller._worker_alive_since = {
+            WorkerID(b"w0"): (0.0, _create_mock_worker_heartbeat({})),
+            WorkerID(b"w1"): (0.0, _create_mock_worker_heartbeat({})),
+        }
 
         self.controller.register(binder, task_controller, self.worker_controller)
 
     async def test_pending_equals_desired_minus_connected(self):
         """pendingWorkers = max(0, last_desired_total - connected_count)."""
-        from scaler.scheduler.policies.scaling.utility import build_set_desired_command
-
         source = b"mgr-src"
         manager_id = b"mgr-id"
         heartbeat = _create_worker_manager_heartbeat(manager_id)
@@ -356,8 +355,6 @@ class TestPendingWorkersStatus(unittest.IsolatedAsyncioTestCase):
 
     async def test_pending_clamped_at_zero(self):
         """If more workers are connected than desired, pendingWorkers is 0 (never negative)."""
-        from scaler.scheduler.policies.scaling.utility import build_set_desired_command
-
         source = b"mgr-src"
         manager_id = b"mgr-id"
         heartbeat = _create_worker_manager_heartbeat(manager_id)
@@ -373,8 +370,6 @@ class TestPendingWorkersStatus(unittest.IsolatedAsyncioTestCase):
 
     async def test_pending_only_counts_capsets_this_manager_can_serve(self):
         """A capset whose capabilities are not a subset of the manager's capabilities is excluded."""
-        from scaler.scheduler.policies.scaling.utility import build_set_desired_command
-
         source = b"mgr-src"
         manager_id = b"mgr-id"
         # Manager advertises only "cpu" capability.
@@ -394,6 +389,48 @@ class TestPendingWorkersStatus(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(detail.pendingWorkers, 5)
 
 
+class TestManagerSnapshotsCountServingWorkers(unittest.IsolatedAsyncioTestCase):
+    async def test_an_idle_waterfall_tier_does_not_replace_its_draining_workers(self):
+        """A draining worker is not in a manager's worker count, so a holding tier keeps only its serving workers."""
+        setup_logger()
+        scaling_policy = WaterfallScalingPolicy(
+            [
+                WaterfallRule(priority=1, worker_manager_id=b"burst", max_task_concurrency=20),
+                WaterfallRule(priority=2, worker_manager_id=b"warm", max_task_concurrency=8),
+            ]
+        )
+        controller = WorkerManagerController(MagicMock(), scaling_policy)
+
+        # burst runs 3 workers, 2 of them draining; warm runs 2 serving workers, above its floor of 0
+        workers_by_manager = {
+            b"burst": {b"burst-0": False, b"burst-1": True, b"burst-2": True},
+            b"warm": {b"warm-0": False, b"warm-1": False},
+        }
+        worker_controller = MagicMock()
+        worker_controller._worker_alive_since = {
+            WorkerID(worker_id): (0.0, _create_mock_worker_heartbeat({}, draining=draining))
+            for workers in workers_by_manager.values()
+            for worker_id, draining in workers.items()
+        }
+        worker_controller.get_workers_by_manager_id.side_effect = lambda manager_id: [
+            WorkerID(worker_id) for worker_id in workers_by_manager[manager_id]
+        ]
+        task_controller = MagicMock()
+        task_controller._task_id_to_task = {}
+        binder = AsyncMock()
+        controller.register(binder, task_controller, worker_controller)
+
+        await controller.on_heartbeat(b"warm-src", _create_worker_manager_heartbeat(b"warm", max_task_concurrency=8))
+        binder.send.reset_mock()
+        await controller.on_heartbeat(b"burst-src", _create_worker_manager_heartbeat(b"burst", max_task_concurrency=20))
+
+        (command,) = [
+            call.args[1] for call in binder.send.call_args_list if isinstance(call.args[1], WorkerManagerCommand)
+        ]
+        (request,) = command.setDesiredTaskConcurrencyRequests
+        self.assertEqual(request.taskConcurrency, 1)
+
+
 def _create_mock_task(task_id: TaskID, capabilities: dict) -> Task:
     client_id = ClientID.generate_client_id()
     return Task(
@@ -406,7 +443,7 @@ def _create_mock_task(task_id: TaskID, capabilities: dict) -> Task:
     )
 
 
-def _create_mock_worker_heartbeat(capabilities: dict, queued_tasks: int = 0) -> WorkerHeartbeat:
+def _create_mock_worker_heartbeat(capabilities: dict, queued_tasks: int = 0, draining: bool = False) -> WorkerHeartbeat:
     return WorkerHeartbeat(
         agent=Resource(cpu=1, rss=1000000),
         rssFree=500000,
@@ -417,6 +454,7 @@ def _create_mock_worker_heartbeat(capabilities: dict, queued_tasks: int = 0) -> 
         processors=[],
         capabilities=capabilities,
         workerManagerID=b"test",
+        draining=draining,
     )
 
 
